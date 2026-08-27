@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import reduce
 from operator import mul
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from safetensors import SafetensorError, safe_open
 import torch
@@ -161,6 +161,18 @@ class SafeTensorCheckpoint:
                 return handle.get_tensor(name)
         except SafetensorError as exc:
             raise CheckpointError(f"could not load tensor {name!r}") from exc
+
+    def get_tensors(self, names: Iterable[str] | None = None) -> dict[str, torch.Tensor]:
+        """Materialize selected tensors on CPU while opening the file only once."""
+
+        selected = self.tensor_names if names is None else tuple(names)
+        for name in selected:
+            self.tensor_info(name)
+        try:
+            with safe_open(self.path, framework="pt", device="cpu") as handle:
+                return {name: handle.get_tensor(name) for name in selected}
+        except SafetensorError as exc:
+            raise CheckpointError("could not load checkpoint tensors") from exc
 
 
 def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:

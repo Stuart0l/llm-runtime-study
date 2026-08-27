@@ -35,9 +35,28 @@ class RotaryEmbedding(nn.Module):
         self.head_dim = head_dim
         self.theta = theta
         self.max_position_embeddings = max_position_embeddings
-        dimensions = torch.arange(0, head_dim, 2, dtype=torch.float32)
-        inverse_frequencies = 1.0 / (theta ** (dimensions / head_dim))
+        inverse_frequencies = self._build_inverse_frequencies()
         self.register_buffer("inverse_frequencies", inverse_frequencies, persistent=False)
+
+    def _build_inverse_frequencies(
+        self, device: torch.device | str | None = None
+    ) -> torch.Tensor:
+        dimensions = torch.arange(
+            0, self.head_dim, 2, dtype=torch.float32, device=device
+        )
+        return 1.0 / (self.theta ** (dimensions / self.head_dim))
+
+    def materialize(self, device: torch.device | str = "cpu") -> None:
+        """Create real values for a buffer produced during meta construction.
+
+        When ``__init__`` runs under ``torch.device("meta")``, PyTorch executes
+        ``_build_inverse_frequencies`` only to infer its output shape and dtype;
+        no frequency values or storage exist.  Checkpoint loading cannot replace
+        this non-persistent derived buffer, so the model loader calls this method
+        once afterward to perform the actual numerical calculation.
+        """
+
+        self.inverse_frequencies = self._build_inverse_frequencies(device)
 
     def forward(
         self,
