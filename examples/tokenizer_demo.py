@@ -1,4 +1,4 @@
-"""Inspect Qwen3 chat formatting and tokenization."""
+"""Demonstrate Qwen3 chat formatting and tokenization."""
 
 from __future__ import annotations
 

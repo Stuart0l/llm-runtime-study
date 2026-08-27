@@ -1,4 +1,4 @@
-"""Command-line model configuration inspection."""
+"""Inspect the model configuration and derived runtime dimensions."""
 
 from __future__ import annotations
 

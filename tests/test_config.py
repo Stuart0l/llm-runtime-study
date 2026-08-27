@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from mini_llm.config import ConfigError, Qwen3Config
-from mini_llm.inspect import render_summary
+from examples.inspect_config import render_summary
 
 
 def valid_config() -> dict[str, object]:

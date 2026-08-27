@@ -1,4 +1,4 @@
-"""Validate and inspect a local Qwen3 Safetensors checkpoint."""
+"""Demonstrate validation and inspection of a Qwen3 checkpoint."""
 
 from __future__ import annotations
 

@@ -9,7 +9,7 @@ from mini_llm.tokenizer import (
     TokenizerError,
     format_qwen3_chat,
 )
-from mini_llm.tokenizer_demo import render_token_mapping
+from examples.tokenizer_demo import render_token_mapping
 
 
 MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
