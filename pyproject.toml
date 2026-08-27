@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-llm"
+version = "0.1.0"
+description = "A study-oriented Qwen3 inference runtime implemented with PyTorch"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.3",
+    "safetensors>=0.4",
+    "tokenizers>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "transformers>=4.51",
+]
+
+[tool.setuptools.packages.find]
+include = ["mini_llm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Model artifacts are local inputs and can be many gigabytes.
+models/
