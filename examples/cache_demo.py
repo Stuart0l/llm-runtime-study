@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 
 from mini_llm.model import Qwen3ForCausalLM
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer, format_qwen3_chat
+from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
 
 
 def synchronize(device: torch.device) -> None:
@@ -30,7 +30,7 @@ def main() -> None:
         parser.error("--decode-steps must be positive")
 
     tokenizer = Qwen3Tokenizer.from_model_dir(args.model_dir)
-    prompt = format_qwen3_chat(
+    prompt = tokenizer.format_chat(
         [ChatMessage(role="user", content=args.prompt)], enable_thinking=False
     )
     prompt_ids = tokenizer.encode(prompt)

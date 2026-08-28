@@ -118,7 +118,7 @@ class Engine:
                 "Granite MoE configuration is recognized, but its model and "
                 "tokenizer are implemented in later components"
             )
-        tokenizer = Qwen3Tokenizer.from_model_dir(model_dir)
+        tokenizer = Qwen3Tokenizer.from_model_dir(model_dir, model_config=config)
         model = Qwen3ForCausalLM.from_model_dir(model_dir)
         model.config.validate_context_length(max_seq_len)
         model.requires_grad_(False)

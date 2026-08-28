@@ -16,9 +16,10 @@ from pydantic import (
     model_validator,
 )
 
+from mini_llm.chat import validate_chat_messages
 from mini_llm.generation import FinishReason
+from mini_llm.interfaces import ChatMessage
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import ChatMessage, validate_chat_messages
 
 
 OpenAIFinishReason = Literal["stop", "length"]

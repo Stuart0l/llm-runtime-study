@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mini_llm.engine import Engine
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import ChatMessage, format_qwen3_chat
+from mini_llm.tokenizer import ChatMessage
 
 
 def main() -> None:
@@ -28,14 +28,14 @@ def main() -> None:
         ChatMessage("assistant", "It stores attention keys and values."),
         ChatMessage("user", "Why does that make decoding faster?"),
     ]
-    print("Formatted Qwen3 prompt:\n")
-    print(format_qwen3_chat(messages, enable_thinking=False))
-
     engine = Engine.from_model_dir(
         args.model_dir,
         device=args.device,
         dtype=args.dtype,
     )
+    print("Formatted prompt:\n")
+    print(engine.tokenizer.format_chat(messages, enable_thinking=False))
+
     print("Generated continuation:\n")
     for event in engine.generate(
         messages,

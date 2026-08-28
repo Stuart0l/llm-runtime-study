@@ -15,7 +15,7 @@ from mini_llm.sampling import (
     make_generator,
     sample_next_token,
 )
-from mini_llm.tokenizer import ChatMessage, TokenizerError, format_qwen3_chat
+from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer, TokenizerError
 
 
 class SamplingTests(unittest.TestCase):
@@ -89,7 +89,9 @@ class _FakeTokenizer:
         return self.prompt_ids
 
     def format_chat(self, messages, *, enable_thinking=False) -> str:
-        return format_qwen3_chat(messages, enable_thinking=enable_thinking)
+        return Qwen3Tokenizer.format_chat(
+            messages, enable_thinking=enable_thinking
+        )
 
     def decode(self, token_ids, *, skip_special_tokens=False) -> str:
         self.decoded_token_ids.append(list(token_ids))
@@ -98,7 +100,9 @@ class _FakeTokenizer:
 
 class _SplitUnicodeTokenizer:
     def format_chat(self, messages, *, enable_thinking=False) -> str:
-        return format_qwen3_chat(messages, enable_thinking=enable_thinking)
+        return Qwen3Tokenizer.format_chat(
+            messages, enable_thinking=enable_thinking
+        )
 
     def encode(self, text: str) -> list[int]:
         return [0]

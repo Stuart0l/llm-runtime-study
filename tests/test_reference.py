@@ -8,7 +8,7 @@ import unittest
 import torch
 
 from mini_llm.model import Qwen3ForCausalLM
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer, format_qwen3_chat
+from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +38,7 @@ class TransformersReferenceTests(unittest.TestCase):
         from transformers import AutoModelForCausalLM
 
         tokenizer = Qwen3Tokenizer.from_model_dir(_MODEL_DIR)
-        prompt = format_qwen3_chat(
+        prompt = tokenizer.format_chat(
             [
                 ChatMessage(
                     role="user",
