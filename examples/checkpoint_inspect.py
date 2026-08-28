@@ -1,4 +1,4 @@
-"""Demonstrate validation and inspection of a Qwen3 checkpoint."""
+"""Demonstrate validation and inspection of a supported checkpoint."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from typing import Sequence
 from mini_llm.checkpoint import (
     CheckpointError,
     SafeTensorCheckpoint,
-    validate_qwen3_checkpoint,
+    validate_checkpoint,
 )
-from mini_llm.config import ConfigError, Qwen3Config
+from mini_llm.config import ConfigError, GraniteMoeConfig, ModelConfig, load_config
 
 
 def _format_bytes(size: int) -> str:
@@ -26,7 +26,7 @@ def _format_bytes(size: int) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate and summarize a Qwen3 Safetensors checkpoint."
+        description="Validate and summarize a supported Safetensors checkpoint."
     )
     parser.add_argument("model_dir", type=Path)
     parser.add_argument(
@@ -43,14 +43,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def render_summary(
-    checkpoint: SafeTensorCheckpoint, config: Qwen3Config
+    checkpoint: SafeTensorCheckpoint, config: ModelConfig
 ) -> str:
     dtypes = Counter(tensor.dtype for tensor in checkpoint.manifest)
     dtype_summary = ", ".join(
         f"{dtype}: {count}" for dtype, count in sorted(dtypes.items())
     )
+    family_name = "Qwen3" if config.model_type == "qwen3" else "Granite MoE"
     lines = [
-        "Qwen3 checkpoint: valid",
+        f"{family_name} checkpoint: valid",
         f"  source:                {checkpoint.path}",
         f"  shard files:           {len(checkpoint.shard_paths)}",
         f"  metadata:              {dict(checkpoint.metadata)}",
@@ -59,11 +60,10 @@ def render_summary(
         f"  dtypes:                {dtype_summary}",
         "Global tensors:",
     ]
-    for name in (
-        "model.embed_tokens.weight",
-        "model.norm.weight",
-        "lm_head.weight",
-    ):
+    global_names = ["model.embed_tokens.weight", "model.norm.weight"]
+    if not isinstance(config, GraniteMoeConfig):
+        global_names.append("lm_head.weight")
+    for name in global_names:
         info = checkpoint.tensor_info(name)
         lines.append(f"  {name:<31} {str(info.shape):<22} {info.dtype}")
     lines.append("Decoder layers:")
@@ -82,9 +82,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.values < 0:
         raise SystemExit("--values must be non-negative")
     try:
-        config = Qwen3Config.from_model_dir(args.model_dir)
+        config = load_config(args.model_dir)
         checkpoint = SafeTensorCheckpoint.from_model_dir(args.model_dir)
-        validate_qwen3_checkpoint(checkpoint, config)
+        validate_checkpoint(checkpoint, config)
     except (CheckpointError, ConfigError) as exc:
         raise SystemExit(f"checkpoint error: {exc}") from exc
     print(render_summary(checkpoint, config))

@@ -1,4 +1,4 @@
-"""Lazy Safetensors checkpoint access and strict Qwen3 schema validation."""
+"""Lazy Safetensors access and architecture-specific schema validation."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from functools import reduce
 import json
 from operator import mul
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from safetensors import SafetensorError, safe_open
 import torch
 
-from mini_llm.config import Qwen3Config
+from mini_llm.config import DecoderConfig, GraniteMoeConfig, Qwen3Config
 
 
 class CheckpointError(ValueError):
@@ -325,12 +325,118 @@ def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
     return specs
 
 
+def expected_granite_moe_tensors(
+    config: GraniteMoeConfig,
+) -> dict[str, TensorSpec]:
+    """Build Granite's exact tied-embedding and packed-expert tensor contract."""
+
+    dtype = _CONFIG_TO_SAFETENSOR_DTYPE[config.torch_dtype]
+    hidden = config.hidden_size
+    intermediate = config.intermediate_size
+    query = config.query_projection_size
+    key_value = config.kv_projection_size
+    experts = config.num_local_experts
+
+    # Granite ties the output projection to this embedding matrix, so there is
+    # deliberately no separate lm_head.weight tensor in the checkpoint.
+    specs = {
+        "model.embed_tokens.weight": TensorSpec(
+            (config.vocab_size, hidden), dtype
+        ),
+        "model.norm.weight": TensorSpec((hidden,), dtype),
+    }
+    for layer in range(config.num_hidden_layers):
+        prefix = f"model.layers.{layer}"
+        specs.update(
+            {
+                f"{prefix}.input_layernorm.weight": TensorSpec((hidden,), dtype),
+                f"{prefix}.post_attention_layernorm.weight": TensorSpec(
+                    (hidden,), dtype
+                ),
+                f"{prefix}.self_attn.q_proj.weight": TensorSpec(
+                    (query, hidden), dtype
+                ),
+                f"{prefix}.self_attn.k_proj.weight": TensorSpec(
+                    (key_value, hidden), dtype
+                ),
+                f"{prefix}.self_attn.v_proj.weight": TensorSpec(
+                    (key_value, hidden), dtype
+                ),
+                f"{prefix}.self_attn.o_proj.weight": TensorSpec(
+                    (hidden, query), dtype
+                ),
+                f"{prefix}.block_sparse_moe.router.layer.weight": TensorSpec(
+                    (experts, hidden), dtype
+                ),
+                # Gate and up projections are packed together along dimension 1.
+                f"{prefix}.block_sparse_moe.input_linear.weight": TensorSpec(
+                    (experts, 2 * intermediate, hidden), dtype
+                ),
+                f"{prefix}.block_sparse_moe.output_linear.weight": TensorSpec(
+                    (experts, hidden, intermediate), dtype
+                ),
+            }
+        )
+    return specs
+
+
+CHECKPOINT_SCHEMA_BUILDERS: dict[
+    str, Callable[..., dict[str, TensorSpec]]
+] = {
+    "qwen3": expected_qwen3_tensors,
+    "granitemoe": expected_granite_moe_tensors,
+}
+
+
+def expected_model_tensors(config: DecoderConfig) -> dict[str, TensorSpec]:
+    """Build the registered tensor schema for a model configuration."""
+
+    try:
+        builder = CHECKPOINT_SCHEMA_BUILDERS[config.model_type]
+    except KeyError as exc:
+        raise CheckpointValidationError(
+            f"no checkpoint schema is registered for model_type {config.model_type!r}"
+        ) from exc
+    return builder(config)
+
+
+def validate_checkpoint(
+    checkpoint: SafeTensorCheckpoint, config: DecoderConfig
+) -> None:
+    """Validate all tensor names, shapes, and dtypes for a supported model."""
+
+    expected = expected_model_tensors(config)
+    _validate_tensor_manifest(
+        checkpoint,
+        expected,
+        architecture=config.model_type,
+    )
+
+
 def validate_qwen3_checkpoint(
     checkpoint: SafeTensorCheckpoint, config: Qwen3Config
 ) -> None:
-    """Validate all names, shapes, and dtypes, reporting every discovered issue."""
+    """Compatibility entry point for strict Qwen3 checkpoint validation."""
 
-    expected = expected_qwen3_tensors(config)
+    validate_checkpoint(checkpoint, config)
+
+
+def validate_granite_moe_checkpoint(
+    checkpoint: SafeTensorCheckpoint, config: GraniteMoeConfig
+) -> None:
+    """Validate Granite's tied embeddings and packed MoE tensor layout."""
+
+    validate_checkpoint(checkpoint, config)
+
+
+def _validate_tensor_manifest(
+    checkpoint: SafeTensorCheckpoint,
+    expected: Mapping[str, TensorSpec],
+    *,
+    architecture: str,
+) -> None:
+    """Compare one actual manifest with an already-built tensor contract."""
+
     actual = {tensor.name: tensor for tensor in checkpoint.manifest}
     errors = []
 
@@ -356,5 +462,5 @@ def validate_qwen3_checkpoint(
     if errors:
         details = "\n  - ".join(errors)
         raise CheckpointValidationError(
-            f"checkpoint does not match Qwen3 configuration:\n  - {details}"
+            f"checkpoint does not match {architecture} configuration:\n  - {details}"
         )

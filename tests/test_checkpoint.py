@@ -12,13 +12,17 @@ from mini_llm.checkpoint import (
     CheckpointError,
     CheckpointValidationError,
     SafeTensorCheckpoint,
+    expected_granite_moe_tensors,
     expected_qwen3_tensors,
+    validate_checkpoint,
+    validate_granite_moe_checkpoint,
     validate_qwen3_checkpoint,
 )
-from mini_llm.config import Qwen3Config
+from mini_llm.config import GraniteMoeConfig, Qwen3Config
 
 
 MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 def tiny_config() -> Qwen3Config:
@@ -51,6 +55,45 @@ def tensors_for(config: Qwen3Config) -> dict[str, torch.Tensor]:
     return {
         name: torch.zeros(spec.shape, dtype=torch.bfloat16)
         for name, spec in expected_qwen3_tensors(config).items()
+    }
+
+
+def tiny_granite_config() -> GraniteMoeConfig:
+    return GraniteMoeConfig.from_dict(
+        {
+            "architectures": ["GraniteMoeForCausalLM"],
+            "model_type": "granitemoe",
+            "vocab_size": 16,
+            "hidden_size": 8,
+            "intermediate_size": 4,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+            "rms_norm_eps": 1e-6,
+            "rope_theta": 10_000,
+            "hidden_act": "silu",
+            "attention_bias": False,
+            "attention_dropout": 0.0,
+            "attention_multiplier": 0.5,
+            "embedding_multiplier": 2.0,
+            "residual_multiplier": 0.25,
+            "logits_scaling": 4.0,
+            "num_local_experts": 4,
+            "num_experts_per_tok": 2,
+            "tie_word_embeddings": True,
+            "torch_dtype": "bfloat16",
+            "bos_token_id": 0,
+            "eos_token_id": 0,
+            "pad_token_id": 0,
+        }
+    )
+
+
+def granite_tensors_for(config: GraniteMoeConfig) -> dict[str, torch.Tensor]:
+    return {
+        name: torch.zeros(spec.shape, dtype=torch.bfloat16)
+        for name, spec in expected_granite_moe_tensors(config).items()
     }
 
 
@@ -211,6 +254,81 @@ class CheckpointSchemaTests(unittest.TestCase):
                 checkpoint.get_tensor("missing.weight")
 
 
+class GraniteCheckpointSchemaTests(unittest.TestCase):
+    def test_describes_packed_experts_and_tied_embeddings(self) -> None:
+        config = tiny_granite_config()
+
+        specs = expected_granite_moe_tensors(config)
+
+        self.assertEqual(len(specs), 11)
+        self.assertNotIn("lm_head.weight", specs)
+        self.assertEqual(
+            specs[
+                "model.layers.0.block_sparse_moe.router.layer.weight"
+            ].shape,
+            (4, 8),
+        )
+        self.assertEqual(
+            specs[
+                "model.layers.0.block_sparse_moe.input_linear.weight"
+            ].shape,
+            (4, 8, 8),
+        )
+        self.assertEqual(
+            specs[
+                "model.layers.0.block_sparse_moe.output_linear.weight"
+            ].shape,
+            (4, 8, 4),
+        )
+
+    def test_validates_complete_synthetic_granite_checkpoint(self) -> None:
+        config = tiny_granite_config()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.safetensors"
+            save_file(granite_tensors_for(config), path)
+            checkpoint = SafeTensorCheckpoint(path)
+
+            validate_granite_moe_checkpoint(checkpoint, config)
+            validate_checkpoint(checkpoint, config)
+
+        self.assertEqual(checkpoint.tensor_count, 11)
+
+    def test_reports_packed_expert_shape_and_dtype_errors(self) -> None:
+        config = tiny_granite_config()
+        tensors = granite_tensors_for(config)
+        input_name = "model.layers.0.block_sparse_moe.input_linear.weight"
+        output_name = "model.layers.0.block_sparse_moe.output_linear.weight"
+        tensors[input_name] = torch.zeros((4, 4, 8), dtype=torch.bfloat16)
+        tensors[output_name] = torch.zeros((4, 8, 4), dtype=torch.float32)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.safetensors"
+            save_file(tensors, path)
+            checkpoint = SafeTensorCheckpoint(path)
+
+            with self.assertRaises(CheckpointValidationError) as caught:
+                validate_granite_moe_checkpoint(checkpoint, config)
+
+        message = str(caught.exception)
+        self.assertIn(f"shape mismatch for {input_name}", message)
+        self.assertIn(f"dtype mismatch for {output_name}", message)
+
+    def test_rejects_separate_lm_head_for_tied_embeddings(self) -> None:
+        config = tiny_granite_config()
+        tensors = granite_tensors_for(config)
+        tensors["lm_head.weight"] = torch.zeros((16, 8), dtype=torch.bfloat16)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.safetensors"
+            save_file(tensors, path)
+            checkpoint = SafeTensorCheckpoint(path)
+
+            with self.assertRaisesRegex(
+                CheckpointValidationError, "unexpected tensors: lm_head.weight"
+            ):
+                validate_granite_moe_checkpoint(checkpoint, config)
+
+
 class ShardedCheckpointTests(unittest.TestCase):
     def test_combines_manifests_and_loads_tensors_from_each_shard(self) -> None:
         config = tiny_config()
@@ -289,6 +407,47 @@ class LocalCheckpointIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(tensor.shape), (128,))
         self.assertEqual(tensor.dtype, torch.bfloat16)
         self.assertEqual(tensor.device.type, "cpu")
+
+
+@unittest.skipUnless(
+    GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+)
+class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.config = GraniteMoeConfig.from_model_dir(GRANITE_MODEL_DIR)
+        cls.checkpoint = SafeTensorCheckpoint.from_model_dir(GRANITE_MODEL_DIR)
+
+    def test_local_checkpoint_matches_all_218_tensor_specs(self) -> None:
+        validate_granite_moe_checkpoint(self.checkpoint, self.config)
+
+        self.assertEqual(self.checkpoint.tensor_count, 218)
+        self.assertEqual(
+            sum(tensor.num_elements for tensor in self.checkpoint.manifest),
+            self.config.total_parameter_estimate,
+        )
+
+    def test_local_packed_expert_headers_match_configuration(self) -> None:
+        input_info = self.checkpoint.tensor_info(
+            "model.layers.0.block_sparse_moe.input_linear.weight"
+        )
+        output_info = self.checkpoint.tensor_info(
+            "model.layers.0.block_sparse_moe.output_linear.weight"
+        )
+        router_info = self.checkpoint.tensor_info(
+            "model.layers.0.block_sparse_moe.router.layer.weight"
+        )
+
+        self.assertEqual(input_info.shape, (32, 1024, 1024))
+        self.assertEqual(output_info.shape, (32, 1024, 512))
+        self.assertEqual(router_info.shape, (32, 1024))
+        self.assertEqual(input_info.dtype, "BF16")
+
+    def test_tied_embedding_checkpoint_has_no_lm_head(self) -> None:
+        names = {tensor.name for tensor in self.checkpoint.manifest}
+
+        self.assertIn("model.embed_tokens.weight", names)
+        self.assertNotIn("lm_head.weight", names)
 
 
 if __name__ == "__main__":
