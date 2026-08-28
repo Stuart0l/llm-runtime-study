@@ -11,6 +11,7 @@ import torch
 
 from mini_llm.engine import Engine
 from mini_llm.sampling import SamplingConfig
+from mini_llm.tokenizer import ChatMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +24,7 @@ class Result:
 
 def run(engine: Engine, prompt: str, max_new_tokens: int) -> Result:
     stream = engine.generate(
-        prompt,
+        [ChatMessage(role="user", content=prompt)],
         max_new_tokens=max_new_tokens,
         sampling=SamplingConfig(temperature=0),
     )

@@ -10,6 +10,7 @@ import torch
 
 from mini_llm.cli import main
 from mini_llm.generation import GenerationEvent
+from mini_llm.tokenizer import ChatMessage
 
 
 MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
@@ -69,7 +70,10 @@ class CLITests(unittest.TestCase):
         self.assertEqual(engine.generate.call_count, 2)
         self.assertEqual(
             [call.args[0] for call in engine.generate.call_args_list],
-            ["first prompt", "second prompt"],
+            [
+                [ChatMessage("user", "first prompt")],
+                [ChatMessage("user", "second prompt")],
+            ],
         )
         rendered = output.getvalue()
         self.assertEqual(rendered.count("Loaded model"), 1)

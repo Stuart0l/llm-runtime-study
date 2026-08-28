@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Iterator
+from typing import Iterator, Sequence
 
 import torch
 
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.model import Qwen3ForCausalLM
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import Qwen3Tokenizer
+from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
 
 
 class EngineError(ValueError):
@@ -133,18 +133,18 @@ class Engine:
 
     def generate(
         self,
-        prompt: str,
+        messages: Sequence[ChatMessage],
         *,
         max_new_tokens: int,
         sampling: SamplingConfig = SamplingConfig(),
         enable_thinking: bool = False,
     ) -> Iterator[GenerationEvent]:
-        """Format a raw prompt and stream generated text on this engine."""
+        """Format complete chat history and stream generated text."""
 
         return generate_text(
             self.model,
             self.tokenizer,
-            prompt,
+            messages,
             max_new_tokens=max_new_tokens,
             sampling=sampling,
             enable_thinking=enable_thinking,

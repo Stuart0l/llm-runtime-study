@@ -8,7 +8,7 @@ from pathlib import Path
 from mini_llm.generation import generate
 from mini_llm.model import Qwen3ForCausalLM
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import Qwen3Tokenizer
+from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
 
 
 def main() -> None:
@@ -32,7 +32,7 @@ def main() -> None:
             generate(
                 model,
                 tokenizer,
-                args.prompt,
+                [ChatMessage(role="user", content=args.prompt)],
                 max_new_tokens=args.max_new_tokens,
                 sampling=sampling,
             )

@@ -90,6 +90,7 @@ explicit override.
 ```python
 from mini_llm.engine import Engine
 from mini_llm.sampling import SamplingConfig
+from mini_llm.tokenizer import ChatMessage
 
 engine = Engine.from_model_dir(
     "models/qwen3-0.6b",
@@ -99,7 +100,7 @@ engine = Engine.from_model_dir(
 )
 
 for event in engine.generate(
-    "Explain what a KV cache does.",
+    [ChatMessage("user", "Explain what a KV cache does.")],
     max_new_tokens=64,
     sampling=SamplingConfig(temperature=0),
 ):

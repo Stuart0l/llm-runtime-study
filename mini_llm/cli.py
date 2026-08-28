@@ -15,7 +15,7 @@ from mini_llm.config import ConfigError
 from mini_llm.engine import Engine, EngineError
 from mini_llm.generation import GenerationError, GenerationEvent
 from mini_llm.sampling import SamplingConfig, SamplingError
-from mini_llm.tokenizer import TokenizerError
+from mini_llm.tokenizer import ChatMessage, TokenizerError
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +107,13 @@ def _run_prompt(
 ) -> RunMetrics:
     """Generate one response using an already-loaded engine."""
 
+    generation_started = time.perf_counter()
     stream = engine.generate(
-        prompt,
+        [ChatMessage(role="user", content=prompt)],
         max_new_tokens=args.max_new_tokens,
         sampling=sampling,
         enable_thinking=args.thinking,
     )
-    generation_started = time.perf_counter()
     events: list[GenerationEvent] = []
     first_token_finished: float | None = None
     for event in stream:

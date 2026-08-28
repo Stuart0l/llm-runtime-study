@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
-from typing import Callable, Iterator, Literal, TypeVar
+from typing import Callable, Iterator, Literal, Sequence, TypeVar
 
 import torch
 
@@ -76,7 +76,7 @@ def _run_model_call(
 def generate(
     model: Qwen3ForCausalLM,
     tokenizer: Qwen3Tokenizer,
-    prompt: str,
+    messages: Sequence[ChatMessage],
     *,
     max_new_tokens: int,
     sampling: SamplingConfig = SamplingConfig(),
@@ -84,18 +84,18 @@ def generate(
     max_seq_len: int | None = None,
     synchronize: Callable[[], None] | None = None,
 ) -> Iterator[GenerationEvent]:
-    """Format a raw user prompt and stream one cache-backed response.
+    """Format complete chat history and return its generation iterator.
 
-    The prompt is evaluated exactly once. Each non-final generated token is
-    then passed to ``decode`` to obtain logits for the following token.
+    Formatting, tokenization, and request validation happen before this
+    function returns. This lets an HTTP adapter reject an invalid request
+    before it commits streaming response headers. Model execution remains lazy
+    and begins when the returned iterator is consumed.
     """
 
     if max_new_tokens <= 0:
         raise GenerationError("max_new_tokens must be positive")
-    if not isinstance(prompt, str) or not prompt:
-        raise GenerationError("prompt must be a non-empty string")
     formatted_prompt = format_qwen3_chat(
-        [ChatMessage(role="user", content=prompt)],
+        messages,
         enable_thinking=enable_thinking,
     )
     prompt_token_ids = tokenizer.encode(formatted_prompt)
@@ -116,58 +116,66 @@ def generate(
 
     available_positions = context_limit - prompt_length
     output_limit = min(max_new_tokens, available_positions)
-    if output_limit == 0:
-        yield GenerationEvent(
-            token_id=None,
-            token_index=None,
-            text_delta="",
-            text="",
-            finish_reason="context_length",
-            prompt_token_count=prompt_length,
-        )
-        return
 
-    device = model.model.embed_tokens.weight.device
-    prompt_tokens = torch.tensor([prompt_token_ids], dtype=torch.long, device=device)
-    model.setup_cache(prompt_length + output_limit)
-    random_generator = make_generator(sampling.seed)
-    eos_token_ids = set(model.config.eos_token_ids)
-    text_decoder = IncrementalTextDecoder(tokenizer)
-
-    with torch.inference_mode():
-        logits, model_seconds = _run_model_call(
-            lambda: model.prefill(prompt_tokens), synchronize
-        )
-    for token_index in range(output_limit):
-        token_id = sample_next_token(
-            logits[0, -1], sampling, generator=random_generator
-        )
-        text_delta = text_decoder.add(token_id)
-
-        finish_reason: FinishReason | None = None
-        if token_id in eos_token_ids:
-            finish_reason = "eos"
-        elif token_index + 1 == output_limit:
-            finish_reason = (
-                "context_length"
-                if output_limit < max_new_tokens
-                else "max_new_tokens"
+    def iterate() -> Iterator[GenerationEvent]:
+        # A local generator keeps model execution lazy for streaming, while all
+        # request validation above has already happened eagerly.
+        if output_limit == 0:
+            yield GenerationEvent(
+                token_id=None,
+                token_index=None,
+                text_delta="",
+                text="",
+                finish_reason="context_length",
+                prompt_token_count=prompt_length,
             )
-
-        yield GenerationEvent(
-            token_id=token_id,
-            token_index=token_index,
-            text_delta=text_delta,
-            text=text_decoder.text,
-            finish_reason=finish_reason,
-            model_seconds=model_seconds,
-            prompt_token_count=prompt_length if token_index == 0 else None,
-        )
-        if finish_reason is not None:
             return
 
-        token_input = torch.tensor([[token_id]], dtype=torch.long, device=device)
+        device = model.model.embed_tokens.weight.device
+        prompt_tokens = torch.tensor(
+            [prompt_token_ids], dtype=torch.long, device=device
+        )
+        model.setup_cache(prompt_length + output_limit)
+        random_generator = make_generator(sampling.seed)
+        eos_token_ids = set(model.config.eos_token_ids)
+        text_decoder = IncrementalTextDecoder(tokenizer)
+
         with torch.inference_mode():
             logits, model_seconds = _run_model_call(
-                lambda: model.decode(token_input), synchronize
+                lambda: model.prefill(prompt_tokens), synchronize
             )
+        for token_index in range(output_limit):
+            token_id = sample_next_token(
+                logits[0, -1], sampling, generator=random_generator
+            )
+            text_delta = text_decoder.add(token_id)
+
+            finish_reason: FinishReason | None = None
+            if token_id in eos_token_ids:
+                finish_reason = "eos"
+            elif token_index + 1 == output_limit:
+                finish_reason = (
+                    "context_length"
+                    if output_limit < max_new_tokens
+                    else "max_new_tokens"
+                )
+
+            yield GenerationEvent(
+                token_id=token_id,
+                token_index=token_index,
+                text_delta=text_delta,
+                text=text_decoder.text,
+                finish_reason=finish_reason,
+                model_seconds=model_seconds,
+                prompt_token_count=prompt_length if token_index == 0 else None,
+            )
+            if finish_reason is not None:
+                return
+
+            token_input = torch.tensor([[token_id]], dtype=torch.long, device=device)
+            with torch.inference_mode():
+                logits, model_seconds = _run_model_call(
+                    lambda: model.decode(token_input), synchronize
+                )
+
+    return iterate()

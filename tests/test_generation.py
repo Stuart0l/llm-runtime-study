@@ -15,6 +15,7 @@ from mini_llm.sampling import (
     make_generator,
     sample_next_token,
 )
+from mini_llm.tokenizer import ChatMessage, TokenizerError
 
 
 class SamplingTests(unittest.TestCase):
@@ -139,6 +140,50 @@ class _FakeModel(nn.Module):
 
 
 class GenerationTests(unittest.TestCase):
+    def test_formats_complete_chat_history_before_iteration(self) -> None:
+        model = _FakeModel([2, 4])
+        tokenizer = _FakeTokenizer()
+        messages = [
+            ChatMessage("system", "Be concise."),
+            ChatMessage("user", "What is a KV cache?"),
+            ChatMessage("assistant", "Stored attention keys and values."),
+            ChatMessage("user", "Why keep it?"),
+        ]
+
+        stream = generate(
+            model,
+            tokenizer,
+            messages,
+            max_new_tokens=2,
+            sampling=SamplingConfig(temperature=0),
+        )
+
+        self.assertEqual(model.prefill_calls, 0)
+        self.assertEqual(
+            tokenizer.encoded_text,
+            "<|im_start|>system\nBe concise.<|im_end|>\n"
+            "<|im_start|>user\nWhat is a KV cache?<|im_end|>\n"
+            "<|im_start|>assistant\nStored attention keys and values.<|im_end|>\n"
+            "<|im_start|>user\nWhy keep it?<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+        )
+
+        events = list(stream)
+
+        self.assertEqual(model.prefill_calls, 1)
+        self.assertEqual([event.token_id for event in events], [2, 4])
+
+    def test_rejects_invalid_chat_history_eagerly(self) -> None:
+        model = _FakeModel([2])
+
+        with self.assertRaisesRegex(TokenizerError, "expected 'assistant'"):
+            generate(
+                model,
+                _FakeTokenizer(),
+                [ChatMessage("user", "one"), ChatMessage("user", "two")],
+                max_new_tokens=1,
+            )
+
     def test_uses_one_prefill_then_single_token_decode_and_stops_at_eos(self) -> None:
         model = _FakeModel([2, 3, 4])
         tokenizer = _FakeTokenizer()
@@ -147,7 +192,7 @@ class GenerationTests(unittest.TestCase):
             generate(
                 model,
                 tokenizer,
-                "Say hello",
+                [ChatMessage("user", "Say hello")],
                 max_new_tokens=6,
                 sampling=SamplingConfig(temperature=0),
             )
@@ -175,7 +220,7 @@ class GenerationTests(unittest.TestCase):
             generate(
                 model,
                 _FakeTokenizer(prompt_ids=[0]),
-                "question",
+                [ChatMessage("user", "question")],
                 max_new_tokens=2,
             )
         )
@@ -187,7 +232,12 @@ class GenerationTests(unittest.TestCase):
     def test_buffers_incomplete_unicode_before_emitting_text_delta(self) -> None:
         model = _FakeModel([2, 3, 4])
         events = list(
-            generate(model, _SplitUnicodeTokenizer(), "question", max_new_tokens=3)
+            generate(
+                model,
+                _SplitUnicodeTokenizer(),
+                [ChatMessage("user", "question")],
+                max_new_tokens=3,
+            )
         )
 
         self.assertEqual([event.text_delta for event in events], ["", "你", ""])
@@ -197,7 +247,7 @@ class GenerationTests(unittest.TestCase):
         stream = generate(
             _FakeModel([2, 3]),
             _FakeTokenizer(prompt_ids=[0]),
-            "question",
+            [ChatMessage("user", "question")],
             max_new_tokens=2,
         )
 
@@ -215,7 +265,7 @@ class GenerationTests(unittest.TestCase):
                 generate(
                     _FakeModel([2, 3, 4]),
                     _FakeTokenizer(prompt_ids=[0]),
-                    "question",
+                    [ChatMessage("user", "question")],
                     max_new_tokens=3,
                     synchronize=synchronize,
                 )
@@ -228,7 +278,14 @@ class GenerationTests(unittest.TestCase):
 
     def test_stops_before_exceeding_context_limit(self) -> None:
         model = _FakeModel([2, 3], context_limit=3)
-        events = list(generate(model, _FakeTokenizer(), "question", max_new_tokens=5))
+        events = list(
+            generate(
+                model,
+                _FakeTokenizer(),
+                [ChatMessage("user", "question")],
+                max_new_tokens=5,
+            )
+        )
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].token_id, 2)
@@ -238,19 +295,31 @@ class GenerationTests(unittest.TestCase):
 
     def test_full_prompt_returns_terminal_context_event_without_forward(self) -> None:
         model = _FakeModel([2], context_limit=2)
-        events = list(generate(model, _FakeTokenizer(), "question", max_new_tokens=1))
+        events = list(
+            generate(
+                model,
+                _FakeTokenizer(),
+                [ChatMessage("user", "question")],
+                max_new_tokens=1,
+            )
+        )
 
         self.assertEqual(model.prefill_calls, 0)
         self.assertIsNone(events[0].token_id)
         self.assertEqual(events[0].finish_reason, "context_length")
         self.assertEqual(events[0].prompt_token_count, 2)
 
-    def test_rejects_empty_prompt_and_non_positive_token_limit(self) -> None:
+    def test_rejects_empty_history_and_non_positive_token_limit(self) -> None:
         model = _FakeModel([2])
-        with self.assertRaisesRegex(GenerationError, "non-empty"):
-            list(generate(model, _FakeTokenizer(), "", max_new_tokens=1))
+        with self.assertRaisesRegex(TokenizerError, "at least one"):
+            generate(model, _FakeTokenizer(), [], max_new_tokens=1)
         with self.assertRaisesRegex(GenerationError, "positive"):
-            list(generate(model, _FakeTokenizer(), "question", max_new_tokens=0))
+            generate(
+                model,
+                _FakeTokenizer(),
+                [ChatMessage("user", "question")],
+                max_new_tokens=0,
+            )
 
 
 if __name__ == "__main__":

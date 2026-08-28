@@ -8,6 +8,7 @@ import torch
 
 from mini_llm.engine import Engine, EngineError, resolve_device, resolve_dtype
 from mini_llm.sampling import SamplingConfig
+from mini_llm.tokenizer import ChatMessage
 
 
 MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
@@ -79,7 +80,7 @@ class EngineTests(unittest.TestCase):
         self.assertIs(engine.tokenizer, tokenizer)
 
     @patch("mini_llm.engine.generate_text")
-    def test_generate_forwards_engine_context_and_sampling(
+    def test_generate_forwards_complete_history_and_sampling(
         self, generate_text: MagicMock
     ) -> None:
         generate_text.return_value = iter(())
@@ -94,9 +95,15 @@ class EngineTests(unittest.TestCase):
             load_seconds=1.0,
         )
         sampling = SamplingConfig(temperature=0.7, top_k=20, seed=4)
+        messages = [
+            ChatMessage("system", "Be concise."),
+            ChatMessage("user", "First question"),
+            ChatMessage("assistant", "First answer"),
+            ChatMessage("user", "Follow-up"),
+        ]
 
         result = engine.generate(
-            "raw prompt",
+            messages,
             max_new_tokens=12,
             sampling=sampling,
             enable_thinking=True,
@@ -106,7 +113,7 @@ class EngineTests(unittest.TestCase):
         generate_text.assert_called_once_with(
             model,
             tokenizer,
-            "raw prompt",
+            messages,
             max_new_tokens=12,
             sampling=sampling,
             enable_thinking=True,
@@ -124,7 +131,9 @@ class MPSEngineIntegrationTests(unittest.TestCase):
             MODEL_DIR, device="mps", dtype="auto", max_seq_len=128
         )
 
-        events = list(engine.generate("Say hello.", max_new_tokens=2))
+        events = list(
+            engine.generate([ChatMessage("user", "Say hello.")], max_new_tokens=2)
+        )
 
         self.assertEqual(engine.device, torch.device("mps"))
         self.assertEqual(engine.dtype, torch.float16)
