@@ -136,6 +136,51 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
         self.assertFalse(any(parameter.is_meta for parameter in loaded.parameters()))
         torch.testing.assert_close(actual, expected)
 
+    def test_from_model_dir_loads_indexed_sharded_checkpoint(self) -> None:
+        config_data = _tiny_config_data(num_hidden_layers=1)
+        source = Qwen3ForCausalLM(Qwen3Config.from_dict(config_data)).eval()
+        tensors = {name: value.detach() for name, value in source.state_dict().items()}
+        names = sorted(tensors)
+        split = len(names) // 2
+        shard_names = (
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        )
+        input_ids = torch.tensor([[1, 4, 7]])
+
+        with tempfile.TemporaryDirectory() as directory:
+            model_dir = Path(directory)
+            (model_dir / "config.json").write_text(json.dumps(config_data))
+            save_file(
+                {name: tensors[name] for name in names[:split]},
+                model_dir / shard_names[0],
+            )
+            save_file(
+                {name: tensors[name] for name in names[split:]},
+                model_dir / shard_names[1],
+            )
+            weight_map = {
+                name: shard_names[0] if index < split else shard_names[1]
+                for index, name in enumerate(names)
+            }
+            total_size = sum(
+                tensor.numel() * tensor.element_size() for tensor in tensors.values()
+            )
+            (model_dir / "model.safetensors.index.json").write_text(
+                json.dumps(
+                    {
+                        "metadata": {"total_size": total_size},
+                        "weight_map": weight_map,
+                    }
+                )
+            )
+
+            loaded = Qwen3ForCausalLM.from_model_dir(model_dir)
+            actual = loaded(input_ids)
+
+        expected = source(input_ids)
+        torch.testing.assert_close(actual, expected)
+
     def test_rejects_invalid_token_ids_and_position_shape(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config())
 

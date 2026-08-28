@@ -1,9 +1,10 @@
 # Mini Qwen3 Inference Runtime
 
-This project is a small, study-oriented text-generation runtime for the
-Qwen3-0.6B Safetensors checkpoint. The transformer execution path is
-implemented directly with PyTorch; it does not use Transformers to load or run
-the model. The trained tokenizer algorithm is reused through `tokenizers`.
+This project is a small, study-oriented text-generation runtime for Qwen3
+Safetensors checkpoints, including Qwen3-0.6B and Qwen3-1.7B. The transformer
+execution path is implemented directly with PyTorch; it does not use
+Transformers to load or run the model. The trained tokenizer algorithm is
+reused through `tokenizers`.
 
 The runtime supports one active request with batch size one. It performs one
 prompt prefill followed by single-token decoding through a preallocated KV
@@ -20,8 +21,8 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Place a Qwen3-0.6B model directory at `models/qwen3-0.6b`. This version expects
-at least:
+Place a Qwen3 model directory at `models/qwen3-0.6b`. A single-file checkpoint
+contains at least:
 
 ```text
 models/qwen3-0.6b/
@@ -31,7 +32,22 @@ models/qwen3-0.6b/
 └── tokenizer_config.json
 ```
 
-Only a single-file, unsharded Safetensors checkpoint is currently supported.
+The runtime also supports standard indexed Safetensors checkpoints such as
+Qwen3-1.7B:
+
+```text
+models/qwen3-1.7b/
+├── config.json
+├── model-00001-of-00002.safetensors
+├── model-00002-of-00002.safetensors
+├── model.safetensors.index.json
+├── tokenizer.json
+└── tokenizer_config.json
+```
+
+The runtime reads every shard header into one combined manifest. The existing
+Qwen3 schema validator then checks all tensor names, shapes, and dtypes before
+model weights are loaded. Shard indexes are treated as trusted model files.
 
 ## Generate text
 
@@ -285,7 +301,7 @@ Implemented:
 
 - Qwen3 architecture only.
 - Single request and batch size one.
-- Single-file Safetensors loading without Transformers.
+- Single-file and indexed sharded Safetensors loading without Transformers.
 - RMSNorm, Q/K normalization, RoPE, SwiGLU, and grouped-query attention.
 - Dense preallocated KV cache.
 - Greedy, temperature, top-k, and top-p sampling.
@@ -297,6 +313,5 @@ Deferred:
 - HTTP streaming and concurrent batching.
 - Paged attention.
 - Quantization.
-- Sharded checkpoints.
 - Sliding-window cache eviction.
 - Other model architectures.

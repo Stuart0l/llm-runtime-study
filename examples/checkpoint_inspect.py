@@ -51,7 +51,8 @@ def render_summary(
     )
     lines = [
         "Qwen3 checkpoint: valid",
-        f"  file:                  {checkpoint.path}",
+        f"  source:                {checkpoint.path}",
+        f"  shard files:           {len(checkpoint.shard_paths)}",
         f"  metadata:              {dict(checkpoint.metadata)}",
         f"  tensors:               {checkpoint.tensor_count}",
         f"  logical tensor bytes:  {_format_bytes(checkpoint.tensor_bytes)}",

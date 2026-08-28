@@ -264,7 +264,7 @@ class Qwen3ForCausalLM(nn.Module):
 
     @classmethod
     def from_model_dir(cls, model_dir: str | Path) -> "Qwen3ForCausalLM":
-        """Validate and directly assign a single-file Qwen3 checkpoint on CPU."""
+        """Validate and directly assign a Qwen3 checkpoint on CPU."""
 
         config = Qwen3Config.from_model_dir(model_dir)
         checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)

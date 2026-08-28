@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,6 +52,46 @@ def tensors_for(config: Qwen3Config) -> dict[str, torch.Tensor]:
         name: torch.zeros(spec.shape, dtype=torch.bfloat16)
         for name, spec in expected_qwen3_tensors(config).items()
     }
+
+
+def save_sharded_checkpoint(
+    model_dir: Path,
+    tensors: dict[str, torch.Tensor],
+    *,
+    metadata: dict[str, str] | None = None,
+) -> tuple[Path, Path, dict[str, str]]:
+    """Split tensors across two shards and write a Hugging Face-style index."""
+
+    names = sorted(tensors)
+    split = len(names) // 2
+    first_name = "model-00001-of-00002.safetensors"
+    second_name = "model-00002-of-00002.safetensors"
+    first_names = names[:split]
+    second_names = names[split:]
+    save_file(
+        {name: tensors[name] for name in first_names},
+        model_dir / first_name,
+        metadata=metadata,
+    )
+    save_file(
+        {name: tensors[name] for name in second_names},
+        model_dir / second_name,
+        metadata=metadata,
+    )
+    weight_map = {
+        name: first_name if name in first_names else second_name for name in names
+    }
+    total_size = sum(
+        tensor.numel() * tensor.element_size() for tensor in tensors.values()
+    )
+    index_path = model_dir / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps(
+            {"metadata": {"total_size": total_size}, "weight_map": weight_map}
+        ),
+        encoding="utf-8",
+    )
+    return model_dir / first_name, model_dir / second_name, weight_map
 
 
 class CheckpointSchemaTests(unittest.TestCase):
@@ -169,6 +210,56 @@ class CheckpointSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(CheckpointError, "not present"):
                 checkpoint.get_tensor("missing.weight")
 
+
+class ShardedCheckpointTests(unittest.TestCase):
+    def test_combines_manifests_and_loads_tensors_from_each_shard(self) -> None:
+        config = tiny_config()
+        tensors = tensors_for(config)
+        tensors["model.embed_tokens.weight"] = torch.arange(
+            128, dtype=torch.bfloat16
+        ).reshape(16, 8)
+        tensors["model.norm.weight"] = torch.arange(8, dtype=torch.bfloat16)
+
+        with tempfile.TemporaryDirectory() as directory:
+            model_dir = Path(directory)
+            first, second, weight_map = save_sharded_checkpoint(
+                model_dir, tensors, metadata={"format": "pt"}
+            )
+            checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
+            validate_qwen3_checkpoint(checkpoint, config)
+
+            names = ["model.embed_tokens.weight", "model.norm.weight"]
+            loaded = checkpoint.get_tensors(names)
+
+        self.assertTrue(checkpoint.is_sharded)
+        self.assertEqual(checkpoint.shard_paths, (first, second))
+        self.assertEqual(checkpoint.metadata, {"format": "pt"})
+        self.assertEqual(
+            checkpoint.index_metadata,
+            {
+                "total_size": sum(
+                    tensor.numel() * tensor.element_size()
+                    for tensor in tensors.values()
+                )
+            },
+        )
+        self.assertNotEqual(weight_map[names[0]], weight_map[names[1]])
+        torch.testing.assert_close(loaded[names[0]], tensors[names[0]])
+        torch.testing.assert_close(loaded[names[1]], tensors[names[1]])
+
+    def test_rejects_missing_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model_dir = Path(directory)
+            index = {
+                "metadata": {"total_size": 16},
+                "weight_map": {"weight": "missing.safetensors"},
+            }
+            (model_dir / "model.safetensors.index.json").write_text(
+                json.dumps(index), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(CheckpointError, "shard does not exist"):
+                SafeTensorCheckpoint.from_model_dir(model_dir)
 
 @unittest.skipUnless(MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable")
 class LocalCheckpointIntegrationTests(unittest.TestCase):

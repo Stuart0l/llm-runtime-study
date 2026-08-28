@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import reduce
+import json
 from operator import mul
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from safetensors import SafetensorError, safe_open
 import torch
@@ -65,10 +66,11 @@ class TensorSpec:
 
 
 class SafeTensorCheckpoint:
-    """Read a single-file checkpoint lazily.
+    """Read a single-file or indexed sharded checkpoint lazily.
 
-    Construction reads the small Safetensors header and caches its manifest.
-    Tensor payloads remain unmapped until :meth:`get_tensor` is called.
+    Construction reads the small Safetensors headers and caches one combined
+    manifest. Tensor payloads remain unmapped until :meth:`get_tensor` or
+    :meth:`get_tensors` is called.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -80,9 +82,82 @@ class SafeTensorCheckpoint:
                 f"checkpoint must use the .safetensors extension: {self.path}"
             )
 
+        metadata, manifest = self._inspect_shard(self.path)
+        self._metadata = metadata
+        self._index_metadata: dict[str, Any] = {}
+        self._shard_paths = (self.path,)
+        self._is_sharded = False
+        self._tensor_paths = {tensor.name: self.path for tensor in manifest}
+        self._set_manifest(manifest)
+
+    @classmethod
+    def from_model_dir(cls, model_dir: str | Path) -> "SafeTensorCheckpoint":
+        """Open a single-file checkpoint or its Safetensors shard index."""
+
+        model_path = Path(model_dir)
+        checkpoint_path = model_path / "model.safetensors"
+        if checkpoint_path.is_file():
+            return cls(checkpoint_path)
+        index_path = model_path / "model.safetensors.index.json"
+        if index_path.is_file():
+            return cls._from_index(index_path)
+        raise CheckpointError(
+            "model directory contains neither model.safetensors nor "
+            f"model.safetensors.index.json: {model_path}"
+        )
+
+    @classmethod
+    def _from_index(cls, index_path: Path) -> "SafeTensorCheckpoint":
+        """Open a standard Hugging Face Safetensors shard index.
+
+        The runtime assumes the index is trusted: every listed shard is in the
+        model directory and every tensor-to-shard mapping is correct. The
+        ordinary Qwen3 checkpoint validator still checks the combined tensor
+        names, shapes, and dtypes before model loading.
+        """
+
         try:
-            with safe_open(self.path, framework="pt", device="cpu") as handle:
-                self._metadata = dict(handle.metadata() or {})
+            raw = json.loads(index_path.read_text(encoding="utf-8"))
+            weight_map = raw["weight_map"]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise CheckpointError(
+                f"could not read checkpoint index {index_path}: {exc}"
+            ) from exc
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise CheckpointError(
+                f"checkpoint index weight_map must be a non-empty object: {index_path}"
+            )
+
+        model_dir = index_path.parent
+        shard_paths = tuple(
+            model_dir / filename for filename in dict.fromkeys(weight_map.values())
+        )
+        manifest = []
+        shard_metadata = []
+        for shard_path in shard_paths:
+            if not shard_path.is_file():
+                raise CheckpointError(f"checkpoint shard does not exist: {shard_path}")
+            metadata, shard_manifest = cls._inspect_shard(shard_path)
+            shard_metadata.append(metadata)
+            manifest.extend(shard_manifest)
+
+        instance = cls.__new__(cls)
+        instance.path = index_path
+        instance._metadata = shard_metadata[0]
+        instance._index_metadata = dict(raw.get("metadata", {}))
+        instance._shard_paths = shard_paths
+        instance._is_sharded = True
+        instance._tensor_paths = {
+            name: model_dir / filename for name, filename in weight_map.items()
+        }
+        instance._set_manifest(manifest)
+        return instance
+
+    @staticmethod
+    def _inspect_shard(path: Path) -> tuple[dict[str, str], list[TensorInfo]]:
+        try:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                metadata = dict(handle.metadata() or {})
                 manifest = []
                 for name in handle.keys():
                     view = handle.get_slice(name)
@@ -102,31 +177,33 @@ class SafeTensorCheckpoint:
                             num_bytes=num_elements * _SAFETENSOR_DTYPE_BYTES[dtype],
                         )
                     )
+                return metadata, manifest
         except SafetensorError as exc:
-            raise CheckpointError(f"invalid Safetensors checkpoint: {self.path}") from exc
+            raise CheckpointError(f"invalid Safetensors checkpoint: {path}") from exc
 
-        self._manifest = tuple(manifest)
+    def _set_manifest(self, manifest: Iterable[TensorInfo]) -> None:
+        self._manifest = tuple(sorted(manifest, key=lambda tensor: tensor.name))
         self._by_name = {tensor.name: tensor for tensor in self._manifest}
-
-    @classmethod
-    def from_model_dir(cls, model_dir: str | Path) -> "SafeTensorCheckpoint":
-        """Open the v1 single-file checkpoint from a local model directory."""
-
-        model_path = Path(model_dir)
-        checkpoint_path = model_path / "model.safetensors"
-        if checkpoint_path.is_file():
-            return cls(checkpoint_path)
-        index_path = model_path / "model.safetensors.index.json"
-        if index_path.is_file():
-            raise CheckpointError(
-                "sharded Safetensors checkpoints are not supported in v1: "
-                f"{index_path}"
-            )
-        raise CheckpointError(f"checkpoint file does not exist: {checkpoint_path}")
 
     @property
     def metadata(self) -> Mapping[str, str]:
         return self._metadata.copy()
+
+    @property
+    def index_metadata(self) -> Mapping[str, Any]:
+        """Metadata from the shard index, empty for a single-file checkpoint."""
+
+        return self._index_metadata.copy()
+
+    @property
+    def shard_paths(self) -> tuple[Path, ...]:
+        return self._shard_paths
+
+    @property
+    def is_sharded(self) -> bool:
+        """Whether this checkpoint was discovered through a shard index."""
+
+        return self._is_sharded
 
     @property
     def manifest(self) -> tuple[TensorInfo, ...]:
@@ -152,23 +229,33 @@ class SafeTensorCheckpoint:
         """Materialize one named tensor on CPU without loading other payloads."""
 
         self.tensor_info(name)
+        tensor_path = self._tensor_paths[name]
         try:
-            with safe_open(self.path, framework="pt", device="cpu") as handle:
+            with safe_open(tensor_path, framework="pt", device="cpu") as handle:
                 return handle.get_tensor(name)
         except SafetensorError as exc:
             raise CheckpointError(f"could not load tensor {name!r}") from exc
 
     def get_tensors(self, names: Iterable[str] | None = None) -> dict[str, torch.Tensor]:
-        """Materialize selected tensors on CPU while opening the file only once."""
+        """Materialize selected tensors, opening each needed shard only once."""
 
         selected = tuple(self._by_name) if names is None else tuple(names)
         for name in selected:
             self.tensor_info(name)
+        names_by_path: dict[Path, list[str]] = {}
+        for name in selected:
+            names_by_path.setdefault(self._tensor_paths[name], []).append(name)
+
+        tensors: dict[str, torch.Tensor] = {}
         try:
-            with safe_open(self.path, framework="pt", device="cpu") as handle:
-                return {name: handle.get_tensor(name) for name in selected}
+            for path, shard_names in names_by_path.items():
+                with safe_open(path, framework="pt", device="cpu") as handle:
+                    tensors.update(
+                        (name, handle.get_tensor(name)) for name in shard_names
+                    )
         except SafetensorError as exc:
             raise CheckpointError("could not load checkpoint tensors") from exc
+        return {name: tensors[name] for name in selected}
 
 
 def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
