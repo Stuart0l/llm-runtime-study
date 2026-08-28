@@ -1,4 +1,4 @@
-"""Uncached Qwen3 decoder model assembled from the local primitives."""
+"""Qwen3 decoder model with uncached and dense KV-cache execution."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from mini_llm.cache import LayerKVCache, Qwen3KVCache
 from mini_llm.checkpoint import (
     CheckpointValidationError,
     SafeTensorCheckpoint,
@@ -34,10 +35,12 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         cosine: torch.Tensor,
         sine: torch.Tensor,
+        *,
+        cache: LayerKVCache | None = None,
     ) -> torch.Tensor:
         attention_residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states, cosine, sine)
+        hidden_states = self.self_attn(hidden_states, cosine, sine, cache=cache)
         hidden_states = attention_residual + hidden_states
 
         mlp_residual = hidden_states
@@ -68,7 +71,11 @@ class Qwen3Model(nn.Module):
         input_ids: torch.Tensor,
         *,
         position_ids: torch.Tensor | None = None,
+        layer_caches: list[LayerKVCache] | None = None,
+        position_offset: int = 0,
     ) -> torch.Tensor:
+        """Compute hidden states, optionally writing trusted per-layer caches."""
+        
         if input_ids.ndim != 2:
             raise ValueError(
                 f"input_ids must have shape [batch, sequence], got {tuple(input_ids.shape)}"
@@ -85,35 +92,52 @@ class Qwen3Model(nn.Module):
             )
 
         batch_size, sequence_length = input_ids.shape
+        if layer_caches is not None:
+            if batch_size != 1:
+                raise ValueError("v1 cached execution supports batch size one only")
+
+        expected_position_ids = build_position_ids(
+            sequence_length,
+            offset=position_offset,
+            batch_size=batch_size,
+            device=input_ids.device,
+        )
         if position_ids is None:
-            position_ids = build_position_ids(
-                sequence_length,
-                batch_size=batch_size,
-                device=input_ids.device,
-            )
+            position_ids = expected_position_ids
         elif position_ids.shape != input_ids.shape:
             raise ValueError(
                 "position_ids must have the same [batch, sequence] shape as input_ids, "
                 f"got {tuple(position_ids.shape)} and {tuple(input_ids.shape)}"
+            )
+        elif layer_caches is not None and not torch.equal(
+            position_ids, expected_position_ids
+        ):
+            raise ValueError(
+                "cached position_ids must continue from the cache length "
+                f"{position_offset}, got {position_ids.tolist()}"
             )
 
         hidden_states = self.embed_tokens(input_ids)
         cosine, sine = self.rotary_emb(
             position_ids, output_dtype=hidden_states.dtype
         )
-        for layer in self.layers:
-            hidden_states = layer(hidden_states, cosine, sine)
+        for layer_index, layer in enumerate(self.layers):
+            layer_cache = (
+                None if layer_caches is None else layer_caches[layer_index]
+            )
+            hidden_states = layer(hidden_states, cosine, sine, cache=layer_cache)
         return self.norm(hidden_states)
 
 
 class Qwen3ForCausalLM(nn.Module):
-    """Uncached Qwen3 model that returns vocabulary logits for every token."""
+    """Qwen3 model that returns vocabulary logits for supplied token positions."""
 
     def __init__(self, config: Qwen3Config) -> None:
         super().__init__()
         self.config = config
         self.model = Qwen3Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self._cache: Qwen3KVCache | None = None
 
     def forward(
         self,
@@ -121,8 +145,90 @@ class Qwen3ForCausalLM(nn.Module):
         *,
         position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Run a stateless, uncached full-sequence forward pass."""
+
         hidden_states = self.model(input_ids, position_ids=position_ids)
         return self.lm_head(hidden_states)
+
+    def prefill(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Reset the owned cache, write a complete prompt, and return its logits."""
+
+        if self._cache is None:
+            raise RuntimeError("call setup_cache(capacity) before prefill")
+        self._cache.reset()
+        return self._cached_forward(input_ids)
+
+    def decode(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Append exactly one token to the owned cache and return its logits."""
+
+        if self._cache is None:
+            raise RuntimeError("call setup_cache(capacity) before decode")
+        if self._cache.length == 0:
+            raise RuntimeError("call prefill(input_ids) before decode")
+        if input_ids.ndim != 2 or input_ids.shape != (1, 1):
+            raise ValueError(
+                "decode input_ids must have shape [1, 1], got "
+                f"{tuple(input_ids.shape)}"
+            )
+        return self._cached_forward(input_ids)
+
+    def _cached_forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Run with the cache whose stable properties setup_cache established."""
+
+        assert self._cache is not None
+        sequence_length = input_ids.shape[1]
+        self._cache.ensure_can_append(sequence_length)
+        past_length = self._cache.length
+        hidden_states = self.model(
+            input_ids,
+            layer_caches=self._cache.layers,
+            position_offset=past_length,
+        )
+        expected_length = past_length + sequence_length
+        if self._cache.length != expected_length:
+            raise RuntimeError(
+                f"KV cache length should be {expected_length}, "
+                f"got {self._cache.length}"
+            )
+        return self.lm_head(hidden_states)
+
+    @property
+    def cache(self) -> Qwen3KVCache | None:
+        """The model-owned cache for its one active request, if allocated."""
+
+        return self._cache
+
+    def setup_cache(self, capacity: int) -> None:
+        """Preallocate model-owned cache state for one active request."""
+
+        parameter = self.model.embed_tokens.weight
+        if parameter.is_meta:
+            raise RuntimeError("cannot create a KV cache for an unmaterialized model")
+        self._cache = Qwen3KVCache(
+            self.config,
+            capacity,
+            dtype=parameter.dtype,
+            device=parameter.device,
+        )
+
+    def reset_cache(self) -> None:
+        """Start a new request while retaining the existing cache allocation."""
+
+        if self._cache is None:
+            raise RuntimeError("KV cache is not set up")
+        self._cache.reset()
+
+    def release_cache(self) -> None:
+        """Release the model-owned request cache and its tensor storage."""
+
+        self._cache = None
+
+    def _apply(self, fn, recurse: bool = True):
+        # Device or dtype transformations invalidate the compatibility that
+        # setup_cache established once. Reallocate afterward instead of paying
+        # to validate stable cache properties during every generated token.
+        self.release_cache()
+        return super()._apply(fn, recurse=recurse)
 
     def load_checkpoint(self, checkpoint: SafeTensorCheckpoint) -> None:
         """Turn a meta-constructed model into an executable CPU model.

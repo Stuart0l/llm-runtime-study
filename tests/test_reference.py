@@ -50,19 +50,18 @@ class TransformersReferenceTests(unittest.TestCase):
         input_ids = torch.tensor([tokenizer.encode(prompt)], dtype=torch.long)
 
         model = Qwen3ForCausalLM.from_model_dir(_MODEL_DIR)
+        model.setup_cache(input_ids.shape[1] + 6)
         with torch.inference_mode():
             actual = model(input_ids).float().clone()
-            our_tokens = [int(actual[0, -1].argmax().item())]
-            our_ids = torch.cat(
-                (input_ids, torch.tensor([[our_tokens[0]]], dtype=torch.long)),
-                dim=1,
-            )
+            cached_prefill = model.prefill(input_ids).float()
+            our_tokens = [int(cached_prefill[0, -1].argmax().item())]
+            our_decode_logits = []
             for _ in range(5):
-                next_token = int(model(our_ids)[0, -1].argmax().item())
+                token_input = torch.tensor([[our_tokens[-1]]], dtype=torch.long)
+                decode_logits = model.decode(token_input).float().clone()
+                our_decode_logits.append(decode_logits)
+                next_token = int(decode_logits[0, -1].argmax().item())
                 our_tokens.append(next_token)
-                our_ids = torch.cat(
-                    (our_ids, torch.tensor([[next_token]], dtype=torch.long)), dim=1
-                )
         del model
         gc.collect()
 
@@ -73,33 +72,34 @@ class TransformersReferenceTests(unittest.TestCase):
             attn_implementation="sdpa",
         ).eval()
         with torch.inference_mode():
-            expected = reference(input_ids=input_ids, use_cache=False).logits.float()
+            reference_prefill = reference(input_ids=input_ids, use_cache=True)
+            expected = reference_prefill.logits.float()
             reference_tokens = [int(expected[0, -1].argmax().item())]
-            reference_ids = torch.cat(
-                (
-                    input_ids,
-                    torch.tensor([[reference_tokens[0]]], dtype=torch.long),
-                ),
-                dim=1,
-            )
+            past_key_values = reference_prefill.past_key_values
+            reference_decode_logits = []
             for _ in range(5):
-                next_token = int(
-                    reference(input_ids=reference_ids, use_cache=False)
-                    .logits[0, -1]
-                    .argmax()
-                    .item()
-                )
-                reference_tokens.append(next_token)
-                reference_ids = torch.cat(
-                    (
-                        reference_ids,
-                        torch.tensor([[next_token]], dtype=torch.long),
+                reference_decode = reference(
+                    input_ids=torch.tensor(
+                        [[reference_tokens[-1]]], dtype=torch.long
                     ),
-                    dim=1,
+                    past_key_values=past_key_values,
+                    use_cache=True,
                 )
+                past_key_values = reference_decode.past_key_values
+                decode_logits = reference_decode.logits.float()
+                reference_decode_logits.append(decode_logits)
+                next_token = int(decode_logits[0, -1].argmax().item())
+                reference_tokens.append(next_token)
 
         self.assertEqual(actual.shape, expected.shape)
         torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
+        torch.testing.assert_close(cached_prefill, expected, rtol=0.0, atol=0.0)
+        for our_decode, reference_decode in zip(
+            our_decode_logits, reference_decode_logits, strict=True
+        ):
+            torch.testing.assert_close(
+                our_decode, reference_decode, rtol=0.0, atol=0.0
+            )
         torch.testing.assert_close(
             actual.argmax(dim=-1), expected.argmax(dim=-1), rtol=0.0, atol=0.0
         )

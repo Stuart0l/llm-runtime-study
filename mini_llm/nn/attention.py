@@ -1,4 +1,4 @@
-"""Uncached grouped-query causal self-attention for Qwen3."""
+"""Grouped-query causal self-attention with optional cached K/V states."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from mini_llm.cache import LayerKVCache
 from mini_llm.config import Qwen3Config
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys
 from mini_llm.nn.rope import apply_qwen3_rotary_position_embeddings
@@ -32,7 +33,7 @@ def repeat_kv_heads(states: torch.Tensor, repeats: int) -> torch.Tensor:
 
 
 class Qwen3Attention(nn.Module):
-    """Qwen3 self-attention without a KV cache.
+    """Qwen3 self-attention with uncached and dense-cache execution paths.
 
     The module accepts residual-stream states shaped
     ``[batch, sequence, hidden_size]``.  It projects and reshapes them into
@@ -126,6 +127,8 @@ class Qwen3Attention(nn.Module):
         inputs: torch.Tensor,
         cosine: torch.Tensor,
         sine: torch.Tensor,
+        *,
+        cache: LayerKVCache | None = None,
     ) -> torch.Tensor:
         if not inputs.is_floating_point():
             raise TypeError(
@@ -153,6 +156,28 @@ class Qwen3Attention(nn.Module):
             queries, keys, cosine, sine
         )
 
+        attention_mask = None
+        is_causal = True
+        if cache is not None:
+            past_length = cache.length
+            keys, values = cache.append(keys, values)
+            if past_length > 0 and inputs.shape[1] == 1:
+                # A single decode query is at the final absolute position, so
+                # every valid cached key is in its past and is visible.
+                is_causal = False
+            elif past_length > 0:
+                # For chunked appends, ordinary is_causal=True would align its
+                # triangular mask to the upper-left and hide most cached keys.
+                # Build an absolute-position mask with key_position <= query_position.
+                query_positions = past_length + torch.arange(
+                    inputs.shape[1], device=inputs.device
+                )
+                key_positions = torch.arange(keys.shape[2], device=inputs.device)
+                attention_mask = key_positions.unsqueeze(
+                    0
+                ) <= query_positions.unsqueeze(1)
+                is_causal = False
+
         keys = repeat_kv_heads(keys, self.queries_per_kv_head)
         values = repeat_kv_heads(values, self.queries_per_kv_head)
         dropout_p = self.attention_dropout if self.training else 0.0
@@ -160,8 +185,9 @@ class Qwen3Attention(nn.Module):
             queries,
             keys,
             values,
+            attn_mask=attention_mask,
             dropout_p=dropout_p,
-            is_causal=True,
+            is_causal=is_causal,
             scale=self.scaling,
         )
 
