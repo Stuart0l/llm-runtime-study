@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import tempfile
 import unittest
@@ -16,6 +17,16 @@ from mini_llm.granite_model import (
     GraniteMoeModel,
 )
 from mini_llm.nn import RotaryEmbedding, build_position_ids
+from mini_llm.tokenizer import GraniteTokenizer
+from tests.reference_support import (
+    HAS_TRANSFORMERS,
+    formatted_input,
+    run_mini_runtime,
+    run_transformers,
+)
+
+
+_GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 def _tiny_config_data(*, num_hidden_layers: int = 2) -> dict[str, object]:
@@ -78,6 +89,83 @@ class GraniteMoeDecoderLayerTests(unittest.TestCase):
 
 
 class GraniteMoeForCausalLMTests(unittest.TestCase):
+    @unittest.skipUnless(
+        HAS_TRANSFORMERS,
+        "the optional Transformers reference dependency is not installed",
+    )
+    @unittest.skipUnless(
+        (_GRANITE_MODEL_DIR / "model.safetensors").is_file(),
+        "the local Granite 3.1 checkpoint is not available",
+    )
+    def test_formatted_chat_generation_matches_transformers_sdpa(self) -> None:
+        """Compare relevant next-token logits and cached greedy decisions.
+
+        Packed BF16 expert dispatch is not bit-identical to Transformers because
+        grouping and accumulation can round differently. Require closely aligned
+        logit vectors and identical greedy tokens instead.
+        """
+
+        tokenizer = GraniteTokenizer.from_model_dir(_GRANITE_MODEL_DIR)
+        input_ids = formatted_input(
+            tokenizer,
+            "Define sparse routing briefly.",
+        )
+
+        model = GraniteMoeForCausalLM.from_model_dir(_GRANITE_MODEL_DIR)
+        actual = run_mini_runtime(model, input_ids, generated_tokens=4)
+        del model
+        gc.collect()
+        expected = run_transformers(
+            _GRANITE_MODEL_DIR,
+            input_ids,
+            generated_tokens=4,
+        )
+
+        torch.testing.assert_close(
+            actual.full_logits,
+            actual.prefill_logits,
+            rtol=0.0,
+            atol=0.0,
+        )
+        relevant_pairs = [
+            (actual.prefill_logits[:, -1], expected.prefill_logits[:, -1]),
+            *zip(actual.decode_logits, expected.decode_logits, strict=True),
+        ]
+        for ours, reference in relevant_pairs:
+            similarity = F.cosine_similarity(
+                ours.reshape(1, -1), reference.reshape(1, -1)
+            )
+            self.assertGreater(float(similarity), 0.99)
+            self.assertLess(float((ours - reference).abs().max()), 2.0)
+            self.assertTrue(
+                torch.equal(ours.argmax(dim=-1), reference.argmax(dim=-1))
+            )
+        self.assertEqual(actual.token_ids, expected.token_ids)
+
+        our_text = tokenizer.decode(actual.token_ids)
+        reference_text = tokenizer.decode(expected.token_ids)
+        self.assertEqual(our_text, reference_text)
+        print("\nGranite formatted-chat reference comparison")
+        print(f"  Our output: {our_text!r}")
+        print(f"  HF output:  {reference_text!r}")
+
+    def test_prefill_and_decode_match_uncached_logits(self) -> None:
+        torch.manual_seed(59)
+        model = GraniteMoeForCausalLM(_tiny_config()).eval()
+        input_ids = torch.tensor([[1, 4, 7, 9]])
+        reference = model(input_ids)
+        model.setup_cache(capacity=input_ids.shape[1])
+
+        prefill = model.prefill(input_ids[:, :2])
+        first_decode = model.decode(input_ids[:, 2:3])
+        second_decode = model.decode(input_ids[:, 3:4])
+
+        torch.testing.assert_close(prefill, reference[:, :2])
+        torch.testing.assert_close(first_decode, reference[:, 2:3])
+        torch.testing.assert_close(second_decode, reference[:, 3:4])
+        assert model.cache is not None
+        self.assertEqual(model.cache.length, 4)
+
     def test_model_applies_embedding_multiplier_before_decoder(self) -> None:
         torch.manual_seed(47)
         config = _tiny_config(num_hidden_layers=1)
@@ -119,8 +207,7 @@ class GraniteMoeForCausalLMTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(logits).all())
 
     def test_module_names_match_218_tensor_checkpoint_contract(self) -> None:
-        model_dir = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
-        config = GraniteMoeConfig.from_model_dir(model_dir)
+        config = GraniteMoeConfig.from_model_dir(_GRANITE_MODEL_DIR)
 
         with torch.device("meta"):
             model = GraniteMoeForCausalLM(config)

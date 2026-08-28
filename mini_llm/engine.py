@@ -12,7 +12,7 @@ import torch
 from mini_llm.config import GraniteMoeConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
-from mini_llm.model import Qwen3ForCausalLM
+from mini_llm.qwen_model import Qwen3ForCausalLM
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import Qwen3Tokenizer
 

@@ -10,7 +10,7 @@ import torch
 
 from mini_llm.config import GraniteMoeConfig, load_config
 from mini_llm.granite_model import GraniteMoeForCausalLM
-from mini_llm.model import Qwen3ForCausalLM
+from mini_llm.qwen_model import Qwen3ForCausalLM
 from mini_llm.tokenizer import load_tokenizer
 
 

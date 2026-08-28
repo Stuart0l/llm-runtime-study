@@ -1,4 +1,4 @@
-"""Compare cached and uncached Qwen3 logits during prefill and decode."""
+"""Compare cached and uncached logits for a supported model."""
 
 from __future__ import annotations
 
@@ -8,8 +8,11 @@ from pathlib import Path
 
 import torch
 
-from mini_llm.model import Qwen3ForCausalLM
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
+from mini_llm.config import GraniteMoeConfig, load_config
+from mini_llm.granite_model import GraniteMoeForCausalLM
+from mini_llm.interfaces import ChatMessage
+from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.tokenizer import load_tokenizer
 
 
 def synchronize(device: torch.device) -> None:
@@ -29,12 +32,18 @@ def main() -> None:
     if args.decode_steps <= 0:
         parser.error("--decode-steps must be positive")
 
-    tokenizer = Qwen3Tokenizer.from_model_dir(args.model_dir)
+    config = load_config(args.model_dir)
+    tokenizer = load_tokenizer(args.model_dir)
     prompt = tokenizer.format_chat(
         [ChatMessage(role="user", content=args.prompt)], enable_thinking=False
     )
     prompt_ids = tokenizer.encode(prompt)
-    model = Qwen3ForCausalLM.from_model_dir(args.model_dir)
+    model_type = (
+        GraniteMoeForCausalLM
+        if isinstance(config, GraniteMoeConfig)
+        else Qwen3ForCausalLM
+    )
+    model = model_type.from_model_dir(args.model_dir)
     model.setup_cache(len(prompt_ids) + args.decode_steps)
     full_ids = torch.tensor([prompt_ids], dtype=torch.long)
     device = full_ids.device
@@ -73,8 +82,8 @@ def main() -> None:
             cached_next = int(cached[0, -1].argmax().item())
             uncached_next = int(uncached[0, -1].argmax().item())
             print(
-                f"decode {step + 1}: token={next_token}, "
-                f"cache_length={model.cache.length}, max_logit_error={error:.8f}, "
+                f"decode {step + 1}: cache_length={model.cache.length}, "
+                f"max_logit_error={error:.8f}, "
                 f"next_token_equal={cached_next == uncached_next}"
             )
             next_token = cached_next

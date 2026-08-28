@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from mini_llm.generation import generate
-from mini_llm.model import Qwen3ForCausalLM
+from mini_llm.qwen_model import Qwen3ForCausalLM
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
 

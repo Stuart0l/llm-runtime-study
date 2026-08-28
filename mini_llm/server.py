@@ -83,7 +83,8 @@ def create_app(engine: GenerationEngine, *, served_model: str) -> FastAPI:
     if not served_model:
         raise ValueError("served_model must not be empty")
     app = FastAPI(title="mini-llm", version="0.1.0")
-    # Qwen3ForCausalLM owns one mutable KV cache. asyncio.Lock queues concurrent
+    # Each loaded causal model owns one mutable KV cache. asyncio.Lock queues
+    # concurrent requests before they can enter generation.
     # valid requests in acquisition order, and to_thread keeps the event loop
     # responsive while the synchronous PyTorch generation call is running.
     generation_lock = asyncio.Lock()

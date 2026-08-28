@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import tempfile
 import unittest
@@ -10,8 +11,18 @@ import torch
 
 from mini_llm.checkpoint import SafeTensorCheckpoint
 from mini_llm.config import Qwen3Config
-from mini_llm.model import Qwen3DecoderLayer, Qwen3ForCausalLM
+from mini_llm.qwen_model import Qwen3DecoderLayer, Qwen3ForCausalLM
 from mini_llm.nn import RotaryEmbedding, build_position_ids
+from mini_llm.tokenizer import Qwen3Tokenizer
+from tests.reference_support import (
+    HAS_TRANSFORMERS,
+    formatted_input,
+    run_mini_runtime,
+    run_transformers,
+)
+
+
+_QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
 
 
 def _tiny_config_data(*, num_hidden_layers: int = 2) -> dict[str, object]:
@@ -67,6 +78,52 @@ class Qwen3DecoderLayerTests(unittest.TestCase):
 
 
 class Qwen3ForCausalLMTests(unittest.TestCase):
+    @unittest.skipUnless(
+        HAS_TRANSFORMERS,
+        "the optional Transformers reference dependency is not installed",
+    )
+    @unittest.skipUnless(
+        (_QWEN_MODEL_DIR / "model.safetensors").is_file(),
+        "the local Qwen3-0.6B checkpoint is not available",
+    )
+    def test_formatted_chat_logits_match_transformers_sdpa(self) -> None:
+        """Qwen uses the same CPU BF16 operations and should match exactly."""
+
+        tokenizer = Qwen3Tokenizer.from_model_dir(_QWEN_MODEL_DIR)
+        input_ids = formatted_input(
+            tokenizer,
+            "Explain what a KV cache does in one sentence.",
+        )
+
+        model = Qwen3ForCausalLM.from_model_dir(_QWEN_MODEL_DIR)
+        actual = run_mini_runtime(model, input_ids, generated_tokens=6)
+        del model
+        gc.collect()
+        expected = run_transformers(
+            _QWEN_MODEL_DIR,
+            input_ids,
+            generated_tokens=6,
+        )
+
+        torch.testing.assert_close(
+            actual.full_logits, expected.full_logits, rtol=0.0, atol=0.0
+        )
+        torch.testing.assert_close(
+            actual.prefill_logits, expected.prefill_logits, rtol=0.0, atol=0.0
+        )
+        for ours, reference in zip(
+            actual.decode_logits, expected.decode_logits, strict=True
+        ):
+            torch.testing.assert_close(ours, reference, rtol=0.0, atol=0.0)
+        self.assertEqual(actual.token_ids, expected.token_ids)
+
+        our_text = tokenizer.decode(actual.token_ids)
+        reference_text = tokenizer.decode(expected.token_ids)
+        self.assertEqual(our_text, reference_text)
+        print("\nQwen formatted-chat reference comparison")
+        print(f"  Our output: {our_text!r}")
+        print(f"  HF output:  {reference_text!r}")
+
     def test_forward_returns_finite_logits_for_every_token(self) -> None:
         config = _tiny_config()
         model = Qwen3ForCausalLM(config).eval()

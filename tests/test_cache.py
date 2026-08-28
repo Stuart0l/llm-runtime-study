@@ -6,9 +6,9 @@ import torch
 
 from mini_llm.cache import DenseKVCache, KVCacheError, LayerKVCache
 from mini_llm.config import GraniteMoeConfig
-from mini_llm.model import Qwen3ForCausalLM
+from mini_llm.qwen_model import Qwen3ForCausalLM
 from tests.test_config import valid_granite_config
-from tests.test_model import _tiny_config
+from tests.test_qwen_model import _tiny_config
 
 
 class LayerKVCacheTests(unittest.TestCase):
