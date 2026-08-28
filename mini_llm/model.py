@@ -207,11 +207,21 @@ class Qwen3ForCausalLM(nn.Module):
         return self._cache
 
     def setup_cache(self, capacity: int) -> None:
-        """Preallocate model-owned cache state for one active request."""
+        """Ensure reusable model-owned cache storage for one active request."""
 
         parameter = self.model.embed_tokens.weight
         if parameter.is_meta:
             raise RuntimeError("cannot create a KV cache for an unmaterialized model")
+
+        # Interactive requests commonly need similar capacities. Keep the
+        # existing allocation when it is large enough; prefill will reset it
+        # again before writing the next prompt. If it is too small, release it
+        # before constructing the replacement so MPS never briefly holds both
+        # dense caches in unified memory.
+        if self._cache is not None and self._cache.capacity >= capacity:
+            self._cache.reset()
+            return
+        self._cache = None
         self._cache = Qwen3KVCache(
             self.config,
             capacity,

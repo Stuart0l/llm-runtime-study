@@ -157,6 +157,35 @@ class Qwen3KVCacheTests(unittest.TestCase):
         self.assertFalse(hasattr(model.model, "cache"))
         self.assertFalse(hasattr(model.model, "setup_cache"))
 
+    def test_setup_reuses_a_large_enough_cache_for_the_next_request(self) -> None:
+        model = Qwen3ForCausalLM(_tiny_config()).eval()
+        model.setup_cache(capacity=4)
+
+        with torch.inference_mode():
+            model.prefill(torch.tensor([[1, 2]]))
+        cache = model.cache
+        assert cache is not None
+        key_pointer = cache.layers[0].keys.data_ptr()
+
+        model.setup_cache(capacity=3)
+
+        self.assertIs(model.cache, cache)
+        self.assertEqual(model.cache.capacity, 4)
+        self.assertEqual(model.cache.length, 0)
+        self.assertEqual(model.cache.layers[0].keys.data_ptr(), key_pointer)
+
+    def test_setup_replaces_an_undersized_cache(self) -> None:
+        model = Qwen3ForCausalLM(_tiny_config()).eval()
+        model.setup_cache(capacity=3)
+        cache = model.cache
+        assert cache is not None
+
+        model.setup_cache(capacity=5)
+
+        self.assertIsNot(model.cache, cache)
+        self.assertEqual(model.cache.capacity, 5)
+        self.assertEqual(model.cache.length, 0)
+
     def test_device_or_dtype_change_releases_owned_cache(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
         model.setup_cache(capacity=4)

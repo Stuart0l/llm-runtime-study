@@ -17,6 +17,78 @@ MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
 
 class CLITests(unittest.TestCase):
     @patch("mini_llm.cli.Engine.from_model_dir")
+    def test_interactive_mode_loads_once_and_generates_for_each_prompt(
+        self, from_model_dir: MagicMock
+    ) -> None:
+        engine = MagicMock()
+        engine.device = torch.device("cpu")
+        engine.dtype = torch.float32
+        engine.load_seconds = 1.5
+        engine.generate.side_effect = [
+            iter(
+                [
+                    GenerationEvent(
+                        2,
+                        0,
+                        "First answer",
+                        "First answer",
+                        finish_reason="eos",
+                        model_seconds=0.1,
+                        prompt_token_count=3,
+                    )
+                ]
+            ),
+            iter(
+                [
+                    GenerationEvent(
+                        3,
+                        0,
+                        "Second answer",
+                        "Second answer",
+                        finish_reason="eos",
+                        model_seconds=0.1,
+                        prompt_token_count=4,
+                    )
+                ]
+            ),
+        ]
+        from_model_dir.return_value = engine
+        output = StringIO()
+        error = StringIO()
+
+        status = main(
+            ["--model", "model", "--interactive", "--no-metrics"],
+            input_stream=StringIO("first prompt\nsecond prompt\n/quit\n"),
+            output=output,
+            error=error,
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(error.getvalue(), "")
+        from_model_dir.assert_called_once()
+        self.assertEqual(engine.generate.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in engine.generate.call_args_list],
+            ["first prompt", "second prompt"],
+        )
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("Loaded model"), 1)
+        self.assertIn("assistant> First answer", rendered)
+        self.assertIn("assistant> Second answer", rendered)
+
+    @patch("mini_llm.cli.Engine.from_model_dir")
+    def test_one_shot_mode_requires_prompt(
+        self, from_model_dir: MagicMock
+    ) -> None:
+        error = StringIO()
+
+        status = main(["--model", "model"], output=StringIO(), error=error)
+
+        self.assertEqual(status, 2)
+        self.assertIn("--prompt is required", error.getvalue())
+        from_model_dir.assert_not_called()
+
+    @patch("mini_llm.cli.Engine.from_model_dir")
     def test_streams_text_and_prints_benchmark_summary(
         self, from_model_dir: MagicMock
     ) -> None:

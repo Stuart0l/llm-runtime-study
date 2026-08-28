@@ -46,6 +46,23 @@ The prompt is raw user text. The runtime applies Qwen3's chat template and
 tokenizes it internally. Generated text streams to the terminal, followed by a
 benchmark summary.
 
+To load the model once and enter multiple independent prompts, use interactive
+mode:
+
+```bash
+python -m mini_llm \
+  --model models/qwen3-0.6b \
+  --interactive \
+  --max-new-tokens 128 \
+  --temperature 0
+```
+
+The model weights and tokenizer remain loaded between prompts. Each prompt
+starts a fresh generation request and KV cache; the runtime does not yet carry
+conversation history from one prompt to the next. Enter `/quit` or `/exit`, or
+send EOF with Control-D, to stop. `--prompt` may be supplied with
+`--interactive` to provide the first prompt before the input loop begins.
+
 Useful options:
 
 ```text
@@ -57,6 +74,7 @@ Useful options:
 --top-p 0.9
 --seed 42
 --thinking
+--interactive
 --no-stream
 --no-metrics
 ```

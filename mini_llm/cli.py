@@ -35,7 +35,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the study-oriented Qwen3 inference runtime.",
     )
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--prompt", required=True)
+    parser.add_argument(
+        "--prompt",
+        help="raw prompt for one-shot mode, or an optional first interactive prompt",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="load the model once and repeatedly read prompts",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--max-seq-len", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -54,23 +62,53 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace, *, output: TextIO) -> RunMetrics:
-    """Load an engine, stream one response, and return benchmark metrics."""
-
-    sampling = SamplingConfig(
+def _sampling_from_args(args: argparse.Namespace) -> SamplingConfig:
+    return SamplingConfig(
         temperature=args.temperature,
         top_k=args.top_k,
         top_p=args.top_p,
         seed=args.seed,
     )
-    engine = Engine.from_model_dir(
+
+
+def _engine_from_args(args: argparse.Namespace) -> Engine:
+    return Engine.from_model_dir(
         args.model,
         device=args.device,
         dtype=args.dtype,
         max_seq_len=args.max_seq_len,
     )
-    stream = engine.generate(
+
+
+def run(args: argparse.Namespace, *, output: TextIO) -> RunMetrics:
+    """Load an engine, generate one response, and return benchmark metrics."""
+
+    if args.prompt is None:
+        raise GenerationError("--prompt is required unless --interactive is used")
+    sampling = _sampling_from_args(args)
+    engine = _engine_from_args(args)
+    return _run_prompt(
+        engine,
         args.prompt,
+        args,
+        sampling=sampling,
+        output=output,
+    )
+
+
+def _run_prompt(
+    engine: Engine,
+    prompt: str,
+    args: argparse.Namespace,
+    *,
+    sampling: SamplingConfig,
+    output: TextIO,
+    include_load_time: bool = True,
+) -> RunMetrics:
+    """Generate one response using an already-loaded engine."""
+
+    stream = engine.generate(
+        prompt,
         max_new_tokens=args.max_new_tokens,
         sampling=sampling,
         enable_thinking=args.thinking,
@@ -109,11 +147,74 @@ def run(args: argparse.Namespace, *, output: TextIO) -> RunMetrics:
         finish_reason=events[-1].finish_reason or "unknown",
     )
     if not args.no_metrics:
-        _print_metrics(engine, metrics, output=output)
+        _print_metrics(
+            engine,
+            metrics,
+            output=output,
+            include_load_time=include_load_time,
+        )
     return metrics
 
 
-def _print_metrics(engine: Engine, metrics: RunMetrics, *, output: TextIO) -> None:
+def run_interactive(
+    args: argparse.Namespace,
+    *,
+    input_stream: TextIO,
+    output: TextIO,
+    error: TextIO,
+) -> None:
+    """Load one engine and serve independent prompts until the user exits."""
+
+    sampling = _sampling_from_args(args)
+    engine = _engine_from_args(args)
+    print(
+        f"Loaded model on {engine.device} with {engine.dtype} in "
+        f"{engine.load_seconds:.2f} s.",
+        file=output,
+    )
+    print("Enter a prompt. Use /quit or /exit to stop.", file=output)
+
+    initial_prompt = args.prompt
+    while True:
+        if initial_prompt is not None:
+            prompt = initial_prompt
+            initial_prompt = None
+            print(f"you> {prompt}", file=output)
+        else:
+            print("you> ", end="", flush=True, file=output)
+            prompt = input_stream.readline()
+            if prompt == "":
+                print(file=output)
+                return
+            prompt = prompt.rstrip("\r\n")
+
+        if prompt.strip() in {"/quit", "/exit"}:
+            return
+        if not prompt.strip():
+            continue
+
+        print("assistant> ", end="", flush=True, file=output)
+        try:
+            _run_prompt(
+                engine,
+                prompt,
+                args,
+                sampling=sampling,
+                output=output,
+                include_load_time=False,
+            )
+        except (GenerationError, KVCacheError) as exc:
+            print(file=output)
+            print(f"error: {exc}", file=error)
+
+
+def _print_metrics(
+    engine: Engine,
+    metrics: RunMetrics,
+    *,
+    output: TextIO,
+    include_load_time: bool = True,
+) -> None:
     cache = engine.model.cache
     cache_text = "not allocated"
     if cache is not None:
@@ -129,7 +230,8 @@ def _print_metrics(engine: Engine, metrics: RunMetrics, *, output: TextIO) -> No
     print("\nmetrics", file=output)
     print(f"  device:              {engine.device}", file=output)
     print(f"  dtype:               {engine.dtype}", file=output)
-    print(f"  load time:           {engine.load_seconds:.2f} s", file=output)
+    if include_load_time:
+        print(f"  load time:           {engine.load_seconds:.2f} s", file=output)
     print(f"  prompt tokens:       {metrics.prompt_tokens}", file=output)
     print(f"  generated tokens:    {metrics.generated_tokens}", file=output)
     print(f"  cache:               {cache_text}", file=output)
@@ -144,14 +246,26 @@ def _print_metrics(engine: Engine, metrics: RunMetrics, *, output: TextIO) -> No
 def main(
     argv: Sequence[str] | None = None,
     *,
+    input_stream: TextIO | None = None,
     output: TextIO | None = None,
     error: TextIO | None = None,
 ) -> int:
+    input_stream = sys.stdin if input_stream is None else input_stream
     output = sys.stdout if output is None else output
     error = sys.stderr if error is None else error
     args = build_parser().parse_args(argv)
     try:
-        run(args, output=output)
+        if args.interactive:
+            run_interactive(
+                args,
+                input_stream=input_stream,
+                output=output,
+                error=error,
+            )
+        else:
+            run(args, output=output)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=output)
     except (
         CheckpointValidationError,
         ConfigError,
