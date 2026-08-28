@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Mapping, Self, Sequence
 from uuid import uuid4
 
 from pydantic import (
@@ -241,8 +241,18 @@ class OpenAIRequestError(ValueError):
 def validation_error_response(error: ValidationError) -> OpenAIErrorResponse:
     """Convert the first schema failure to the standard OpenAI error envelope."""
 
-    first_error = error.errors(include_url=False)[0]
+    return validation_errors_response(error.errors(include_url=False))
+
+
+def validation_errors_response(
+    errors: Sequence[Mapping[str, Any]],
+) -> OpenAIErrorResponse:
+    """Convert framework-provided validation details to an OpenAI envelope."""
+
+    first_error = errors[0]
     location = first_error.get("loc", ())
+    if location and location[0] == "body":
+        location = location[1:]
     param = ".".join(str(part) for part in location) or None
     message = str(first_error["msg"])
     if message.startswith("Value error, "):
