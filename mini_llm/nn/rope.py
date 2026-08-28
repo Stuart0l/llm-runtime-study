@@ -1,4 +1,4 @@
-"""Rotary position embeddings for Qwen3 query and key heads."""
+"""Rotary position embeddings for decoder query and key heads."""
 
 from __future__ import annotations
 
@@ -136,7 +136,7 @@ def _rotate_half(inputs: torch.Tensor) -> torch.Tensor:
     return torch.cat((-second_half, first_half), dim=-1)
 
 
-def apply_qwen3_rotary_position_embeddings(
+def apply_rotary_position_embeddings(
     queries: torch.Tensor,
     keys: torch.Tensor,
     cosine: torch.Tensor,
@@ -146,7 +146,7 @@ def apply_qwen3_rotary_position_embeddings(
 
     if queries.ndim != 4 or keys.ndim != 4:
         raise ValueError(
-            "Qwen3 RoPE expects Q/K shaped [batch, heads, sequence, head_dim]"
+            "RoPE expects Q/K shaped [batch, heads, sequence, head_dim]"
         )
     if queries.shape[0] != keys.shape[0]:
         raise ValueError("queries and keys must have the same batch size")

@@ -6,7 +6,7 @@ import torch
 
 from mini_llm.nn import (
     RotaryEmbedding,
-    apply_qwen3_rotary_position_embeddings,
+    apply_rotary_position_embeddings,
     build_position_ids,
 )
 
@@ -23,7 +23,7 @@ def main() -> int:
         cosine, sine = rope(position_ids)
         queries = vector.reshape(1, 1, 1, 4)
         keys = vector.reshape(1, 1, 1, 4)
-        rotated_queries, _ = apply_qwen3_rotary_position_embeddings(
+        rotated_queries, _ = apply_rotary_position_embeddings(
             queries, keys, cosine, sine
         )
         print(f"  position {position:>2}:")

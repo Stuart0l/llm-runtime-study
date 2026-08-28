@@ -6,7 +6,8 @@ import unittest
 import torch
 from torch.nn import functional as F
 
-from mini_llm.nn import Qwen3Attention, repeat_kv_heads
+from mini_llm.cache import LayerKVCache
+from mini_llm.nn import GraniteAttention, Qwen3Attention, repeat_kv_heads
 
 
 def _identity_rope_tables(
@@ -149,6 +150,97 @@ class Qwen3AttentionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "expected input shape"):
             attention(torch.ones(1, 3, 7), cosine, sine)
+
+
+class GraniteAttentionTests(unittest.TestCase):
+    def test_projection_layout_has_no_q_or_k_norm_weights(self) -> None:
+        attention = GraniteAttention(
+            hidden_size=8,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=4,
+            attention_scale=0.015625,
+        )
+
+        self.assertEqual(attention.q_proj.weight.shape, (8, 8))
+        self.assertEqual(attention.k_proj.weight.shape, (4, 8))
+        self.assertEqual(attention.v_proj.weight.shape, (4, 8))
+        self.assertEqual(attention.o_proj.weight.shape, (8, 8))
+        self.assertNotIn("q_norm.weight", attention.state_dict())
+        self.assertNotIn("k_norm.weight", attention.state_dict())
+        self.assertEqual(attention.scaling, 0.015625)
+
+    def test_matches_manual_gqa_without_query_key_normalization(self) -> None:
+        torch.manual_seed(31)
+        attention = GraniteAttention(
+            hidden_size=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=2,
+            attention_scale=0.25,
+        ).eval()
+        inputs = torch.tensor([[[1.0, 2.0], [-1.0, 0.5], [0.25, -0.75]]])
+        cosine, sine = _identity_rope_tables(1, 3, 2)
+
+        queries = F.linear(inputs, attention.q_proj.weight)
+        queries = queries.view(1, 3, 2, 2).transpose(1, 2)
+        keys = F.linear(inputs, attention.k_proj.weight)
+        keys = keys.view(1, 3, 1, 2).transpose(1, 2)
+        values = F.linear(inputs, attention.v_proj.weight)
+        values = values.view(1, 3, 1, 2).transpose(1, 2)
+        keys = keys.repeat_interleave(2, dim=1)
+        values = values.repeat_interleave(2, dim=1)
+        scores = torch.matmul(queries, keys.transpose(-2, -1)) * 0.25
+        causal_mask = torch.triu(torch.ones(3, 3, dtype=torch.bool), diagonal=1)
+        scores = scores.masked_fill(causal_mask, float("-inf"))
+        probabilities = torch.softmax(scores, dim=-1)
+        attended = torch.matmul(probabilities, values)
+        attended = attended.transpose(1, 2).contiguous().view(1, 3, 4)
+        expected = F.linear(attended, attention.o_proj.weight)
+
+        actual = attention(inputs, cosine, sine)
+
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+    def test_cached_prefill_and_decode_match_uncached_attention(self) -> None:
+        torch.manual_seed(37)
+        attention = GraniteAttention(
+            hidden_size=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=2,
+            attention_scale=0.5,
+        ).eval()
+        inputs = torch.randn(1, 3, 4)
+        cosine, sine = _identity_rope_tables(1, 3, 2)
+        cache = LayerKVCache(
+            keys=torch.empty(1, 1, 3, 2),
+            values=torch.empty(1, 1, 3, 2),
+        )
+
+        reference = attention(inputs, cosine, sine)
+        prefill = attention(
+            inputs[:, :2], cosine[:, :2], sine[:, :2], cache=cache
+        )
+        decode = attention(
+            inputs[:, 2:], cosine[:, 2:], sine[:, 2:], cache=cache
+        )
+
+        torch.testing.assert_close(prefill, reference[:, :2])
+        torch.testing.assert_close(decode, reference[:, 2:])
+        self.assertEqual(cache.length, 3)
+
+    def test_rejects_invalid_explicit_attention_scale(self) -> None:
+        for scale in (0.0, -1.0, float("inf")):
+            with self.subTest(scale=scale):
+                with self.assertRaisesRegex(ValueError, "attention_scale"):
+                    GraniteAttention(
+                        hidden_size=4,
+                        num_attention_heads=2,
+                        num_key_value_heads=1,
+                        head_dim=2,
+                        attention_scale=scale,
+                    )
 
 
 if __name__ == "__main__":

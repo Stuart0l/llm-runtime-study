@@ -7,7 +7,7 @@ import torch
 
 from mini_llm.nn import (
     RotaryEmbedding,
-    apply_qwen3_rotary_position_embeddings,
+    apply_rotary_position_embeddings,
     build_position_ids,
 )
 
@@ -27,7 +27,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         keys = queries.clone()
         cosine, sine = rope(torch.tensor([[0]]))
 
-        rotated_queries, rotated_keys = apply_qwen3_rotary_position_embeddings(
+        rotated_queries, rotated_keys = apply_rotary_position_embeddings(
             queries, keys, cosine, sine
         )
 
@@ -48,7 +48,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
             ]
         )
 
-        rotated, _ = apply_qwen3_rotary_position_embeddings(
+        rotated, _ = apply_rotary_position_embeddings(
             queries, queries, cosine, sine
         )
 
@@ -61,7 +61,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         positions = build_position_ids(3, batch_size=2)
         cosine, sine = rope(positions)
 
-        rotated_queries, rotated_keys = apply_qwen3_rotary_position_embeddings(
+        rotated_queries, rotated_keys = apply_rotary_position_embeddings(
             queries, keys, cosine, sine
         )
 
@@ -76,7 +76,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         keys = torch.ones(1, 8, 2, 8)
         cosine, sine = rope(build_position_ids(2))
 
-        rotated_queries, rotated_keys = apply_qwen3_rotary_position_embeddings(
+        rotated_queries, rotated_keys = apply_rotary_position_embeddings(
             queries, keys, cosine, sine
         )
 
