@@ -150,6 +150,7 @@ class Engine:
             sampling=sampling,
             enable_thinking=enable_thinking,
             max_seq_len=self.max_seq_len,
+            synchronize=self.synchronize,
         )
 
     def synchronize(self) -> None:

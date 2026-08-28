@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 import unittest
 
 import torch
@@ -159,6 +160,8 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual([event.text_delta for event in events], ["Hello", " world", ""])
         self.assertEqual(events[-1].text, "Hello world")
         self.assertEqual(events[-1].finish_reason, "eos")
+        self.assertEqual(events[0].prompt_token_count, 2)
+        self.assertIsNone(events[1].prompt_token_count)
         self.assertEqual(tokenizer.decoded_token_ids, [[2], [3], [4]])
         self.assertEqual(
             tokenizer.encoded_text,
@@ -202,6 +205,27 @@ class GenerationTests(unittest.TestCase):
 
         self.assertFalse(torch.is_inference_mode_enabled())
 
+    def test_synchronized_model_timings_are_attached_to_events(self) -> None:
+        synchronize = MagicMock()
+        with patch(
+            "mini_llm.generation.time.perf_counter",
+            side_effect=[1.0, 1.2, 2.0, 2.1, 3.0, 3.05],
+        ):
+            events = list(
+                generate(
+                    _FakeModel([2, 3, 4]),
+                    _FakeTokenizer(prompt_ids=[0]),
+                    "question",
+                    max_new_tokens=3,
+                    synchronize=synchronize,
+                )
+            )
+
+        self.assertEqual(synchronize.call_count, 6)
+        self.assertAlmostEqual(events[0].model_seconds, 0.2)
+        self.assertAlmostEqual(events[1].model_seconds, 0.1)
+        self.assertAlmostEqual(events[2].model_seconds, 0.05)
+
     def test_stops_before_exceeding_context_limit(self) -> None:
         model = _FakeModel([2, 3], context_limit=3)
         events = list(generate(model, _FakeTokenizer(), "question", max_new_tokens=5))
@@ -219,6 +243,7 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(model.prefill_calls, 0)
         self.assertIsNone(events[0].token_id)
         self.assertEqual(events[0].finish_reason, "context_length")
+        self.assertEqual(events[0].prompt_token_count, 2)
 
     def test_rejects_empty_prompt_and_non_positive_token_limit(self) -> None:
         model = _FakeModel([2])

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Literal
+import time
+from typing import Callable, Iterator, Literal, TypeVar
 
 import torch
 
@@ -28,6 +29,8 @@ class GenerationEvent:
     text_delta: str
     text: str
     finish_reason: FinishReason | None = None
+    model_seconds: float | None = None
+    prompt_token_count: int | None = None
 
     @property
     def finished(self) -> bool:
@@ -57,6 +60,37 @@ class IncrementalTextDecoder:
         return pending_text
 
 
+T = TypeVar("T")
+
+
+def _run_model_call(
+    operation: Callable[[], T], synchronize: Callable[[], None] | None
+) -> tuple[T, float | None]:
+    """Run and optionally time one synchronized prefill or decode call."""
+
+    if synchronize is None:
+        return operation(), None
+    synchronize()
+    started = time.perf_counter()
+    result = operation()
+    synchronize()
+    return result, time.perf_counter() - started
+
+
+def encode_prompt(
+    tokenizer: Qwen3Tokenizer, prompt: str, *, enable_thinking: bool = False
+) -> list[int]:
+    """Apply Qwen3's chat protocol and tokenize one raw user prompt."""
+
+    if not isinstance(prompt, str) or not prompt:
+        raise GenerationError("prompt must be a non-empty string")
+    formatted_prompt = format_qwen3_chat(
+        [ChatMessage(role="user", content=prompt)],
+        enable_thinking=enable_thinking,
+    )
+    return tokenizer.encode(formatted_prompt)
+
+
 def generate(
     model: Qwen3ForCausalLM,
     tokenizer: Qwen3Tokenizer,
@@ -66,6 +100,7 @@ def generate(
     sampling: SamplingConfig = SamplingConfig(),
     enable_thinking: bool = False,
     max_seq_len: int | None = None,
+    synchronize: Callable[[], None] | None = None,
 ) -> Iterator[GenerationEvent]:
     """Format a raw user prompt and stream one cache-backed response.
 
@@ -75,14 +110,9 @@ def generate(
 
     if max_new_tokens <= 0:
         raise GenerationError("max_new_tokens must be positive")
-    if not isinstance(prompt, str) or not prompt:
-        raise GenerationError("prompt must be a non-empty string")
-
-    formatted_prompt = format_qwen3_chat(
-        [ChatMessage(role="user", content=prompt)],
-        enable_thinking=enable_thinking,
+    prompt_token_ids = encode_prompt(
+        tokenizer, prompt, enable_thinking=enable_thinking
     )
-    prompt_token_ids = tokenizer.encode(formatted_prompt)
 
     prompt_length = len(prompt_token_ids)
     model_context_limit = model.config.max_position_embeddings
@@ -107,6 +137,7 @@ def generate(
             text_delta="",
             text="",
             finish_reason="context_length",
+            prompt_token_count=prompt_length,
         )
         return
 
@@ -118,7 +149,9 @@ def generate(
     text_decoder = IncrementalTextDecoder(tokenizer)
 
     with torch.inference_mode():
-        logits = model.prefill(prompt_tokens)
+        logits, model_seconds = _run_model_call(
+            lambda: model.prefill(prompt_tokens), synchronize
+        )
     for token_index in range(output_limit):
         token_id = sample_next_token(
             logits[0, -1], sampling, generator=random_generator
@@ -141,10 +174,14 @@ def generate(
             text_delta=text_delta,
             text=text_decoder.text,
             finish_reason=finish_reason,
+            model_seconds=model_seconds,
+            prompt_token_count=prompt_length if token_index == 0 else None,
         )
         if finish_reason is not None:
             return
 
         token_input = torch.tensor([[token_id]], dtype=torch.long, device=device)
         with torch.inference_mode():
-            logits = model.decode(token_input)
+            logits, model_seconds = _run_model_call(
+                lambda: model.decode(token_input), synchronize
+            )

@@ -112,6 +112,7 @@ class EngineTests(unittest.TestCase):
             sampling=sampling,
             enable_thinking=True,
             max_seq_len=256,
+            synchronize=engine.synchronize,
         )
 
 @unittest.skipUnless(
