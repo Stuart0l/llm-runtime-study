@@ -134,7 +134,7 @@ class Qwen3KVCacheTests(unittest.TestCase):
         self.assertIsNotNone(model.cache)
         self.assertEqual(model.cache.length, 2)
 
-    def test_reset_allows_a_new_prompt_without_reallocation(self) -> None:
+    def test_prefill_starts_a_new_prompt_without_reallocation(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
         model.setup_cache(capacity=4)
         self.assertIsNotNone(model.cache)
@@ -142,7 +142,6 @@ class Qwen3KVCacheTests(unittest.TestCase):
 
         with torch.inference_mode():
             first = model.prefill(torch.tensor([[1, 2]]))
-            model.reset_cache()
             second = model.prefill(torch.tensor([[1, 2]]))
 
         self.assertEqual(model.cache.length, 2)
@@ -166,7 +165,7 @@ class Qwen3KVCacheTests(unittest.TestCase):
 
         self.assertIsNone(model.cache)
 
-    def test_public_cache_lifecycle_is_owned_by_causal_lm(self) -> None:
+    def test_public_cached_execution_requires_setup_then_prefill(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
 
         with self.assertRaisesRegex(RuntimeError, "setup_cache.*before decode"):
@@ -184,8 +183,6 @@ class Qwen3KVCacheTests(unittest.TestCase):
             model(torch.tensor([[3, 4]]))
 
         self.assertEqual(model.cache.length, 2)
-        model.release_cache()
-        self.assertIsNone(model.cache)
 
 
 if __name__ == "__main__":

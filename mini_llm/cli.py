@@ -28,13 +28,6 @@ class RunMetrics:
     decode_seconds: float
     finish_reason: str
 
-    @property
-    def decode_tokens_per_second(self) -> float | None:
-        decode_tokens = max(0, self.generated_tokens - 1)
-        if decode_tokens == 0 or self.decode_seconds <= 0:
-            return None
-        return decode_tokens / self.decode_seconds
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -82,18 +75,15 @@ def run(args: argparse.Namespace, *, output: TextIO) -> RunMetrics:
         sampling=sampling,
         enable_thinking=args.thinking,
     )
-    engine.synchronize()
     generation_started = time.perf_counter()
     events: list[GenerationEvent] = []
     first_token_finished: float | None = None
     for event in stream:
-        engine.synchronize()
         if first_token_finished is None:
             first_token_finished = time.perf_counter()
         events.append(event)
         if not args.no_stream and event.text_delta:
             print(event.text_delta, end="", flush=True, file=output)
-    engine.synchronize()
     generation_finished = time.perf_counter()
 
     if not events:
@@ -128,7 +118,12 @@ def _print_metrics(engine: Engine, metrics: RunMetrics, *, output: TextIO) -> No
     cache_text = "not allocated"
     if cache is not None:
         cache_text = f"{cache.num_bytes / (1024**2):.2f} MiB ({cache.capacity} positions)"
-    decode_rate = metrics.decode_tokens_per_second
+    decode_token_count = max(0, metrics.generated_tokens - 1)
+    decode_rate = (
+        decode_token_count / metrics.decode_seconds
+        if decode_token_count and metrics.decode_seconds > 0
+        else None
+    )
     decode_text = "n/a" if decode_rate is None else f"{decode_rate:.2f} tokens/s"
 
     print("\nmetrics", file=output)

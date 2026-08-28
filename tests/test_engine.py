@@ -54,7 +54,7 @@ class EngineTests(unittest.TestCase):
     @patch("mini_llm.engine.synchronize_device")
     @patch("mini_llm.engine.Qwen3Tokenizer.from_model_dir")
     @patch("mini_llm.engine.Qwen3ForCausalLM.from_model_dir")
-    def test_from_model_dir_places_and_freezes_model_once(
+    def test_from_model_dir_places_and_freezes_loaded_model(
         self,
         load_model: MagicMock,
         load_tokenizer: MagicMock,
@@ -72,7 +72,6 @@ class EngineTests(unittest.TestCase):
 
         model.config.validate_context_length.assert_called_once_with(128)
         model.requires_grad_.assert_called_once_with(False)
-        model.eval.assert_called_once_with()
         model.to.assert_called_once_with(device=torch.device("cpu"), dtype=torch.float32)
         model.model.rotary_emb.materialize.assert_called_once_with(torch.device("cpu"))
         synchronize.assert_called_once_with(torch.device("cpu"))

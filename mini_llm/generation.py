@@ -32,10 +32,6 @@ class GenerationEvent:
     model_seconds: float | None = None
     prompt_token_count: int | None = None
 
-    @property
-    def finished(self) -> bool:
-        return self.finish_reason is not None
-
 
 class IncrementalTextDecoder:
     """Decode only tokens not already emitted as stable Unicode text."""
@@ -77,20 +73,6 @@ def _run_model_call(
     return result, time.perf_counter() - started
 
 
-def encode_prompt(
-    tokenizer: Qwen3Tokenizer, prompt: str, *, enable_thinking: bool = False
-) -> list[int]:
-    """Apply Qwen3's chat protocol and tokenize one raw user prompt."""
-
-    if not isinstance(prompt, str) or not prompt:
-        raise GenerationError("prompt must be a non-empty string")
-    formatted_prompt = format_qwen3_chat(
-        [ChatMessage(role="user", content=prompt)],
-        enable_thinking=enable_thinking,
-    )
-    return tokenizer.encode(formatted_prompt)
-
-
 def generate(
     model: Qwen3ForCausalLM,
     tokenizer: Qwen3Tokenizer,
@@ -110,9 +92,13 @@ def generate(
 
     if max_new_tokens <= 0:
         raise GenerationError("max_new_tokens must be positive")
-    prompt_token_ids = encode_prompt(
-        tokenizer, prompt, enable_thinking=enable_thinking
+    if not isinstance(prompt, str) or not prompt:
+        raise GenerationError("prompt must be a non-empty string")
+    formatted_prompt = format_qwen3_chat(
+        [ChatMessage(role="user", content=prompt)],
+        enable_thinking=enable_thinking,
     )
+    prompt_token_ids = tokenizer.encode(formatted_prompt)
 
     prompt_length = len(prompt_token_ids)
     model_context_limit = model.config.max_position_embeddings

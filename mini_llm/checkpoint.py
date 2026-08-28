@@ -133,10 +133,6 @@ class SafeTensorCheckpoint:
         return self._manifest
 
     @property
-    def tensor_names(self) -> tuple[str, ...]:
-        return tuple(tensor.name for tensor in self._manifest)
-
-    @property
     def tensor_count(self) -> int:
         return len(self._manifest)
 
@@ -165,7 +161,7 @@ class SafeTensorCheckpoint:
     def get_tensors(self, names: Iterable[str] | None = None) -> dict[str, torch.Tensor]:
         """Materialize selected tensors on CPU while opening the file only once."""
 
-        selected = self.tensor_names if names is None else tuple(names)
+        selected = tuple(self._by_name) if names is None else tuple(names)
         for name in selected:
             self.tensor_info(name)
         try:

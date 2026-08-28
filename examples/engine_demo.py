@@ -20,11 +20,6 @@ class Result:
     time_to_first_token: float
     decode_seconds: float
 
-    @property
-    def decode_tokens_per_second(self) -> float:
-        decode_count = max(0, self.generated_token_count - 1)
-        return decode_count / self.decode_seconds if decode_count else 0.0
-
 
 def run(engine: Engine, prompt: str, max_new_tokens: int) -> Result:
     stream = engine.generate(
@@ -32,14 +27,11 @@ def run(engine: Engine, prompt: str, max_new_tokens: int) -> Result:
         max_new_tokens=max_new_tokens,
         sampling=SamplingConfig(temperature=0),
     )
-    engine.synchronize()
     started = time.perf_counter()
     first = next(stream)
-    engine.synchronize()
     first_finished = time.perf_counter()
     events = [first]
     events.extend(stream)
-    engine.synchronize()
     finished = time.perf_counter()
     return Result(
         text=events[-1].text,
@@ -72,10 +64,14 @@ def main() -> None:
         )
         result = run(engine, args.prompt, args.max_new_tokens)
         results[device] = result
+        decode_count = max(0, result.generated_token_count - 1)
+        decode_rate = (
+            decode_count / result.decode_seconds if decode_count else 0.0
+        )
         print(
             f"{device}: dtype={engine.dtype}, load={engine.load_seconds:.2f}s, "
             f"TTFT={result.time_to_first_token * 1_000:.2f}ms, "
-            f"decode={result.decode_tokens_per_second:.2f} tokens/s"
+            f"decode={decode_rate:.2f} tokens/s"
         )
         print(f"     text={result.text!r}")
 

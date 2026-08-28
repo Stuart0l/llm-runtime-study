@@ -23,7 +23,15 @@ class Qwen3DecoderLayer(nn.Module):
 
     def __init__(self, config: Qwen3Config) -> None:
         super().__init__()
-        self.self_attn = Qwen3Attention.from_config(config)
+        self.self_attn = Qwen3Attention(
+            hidden_size=config.hidden_size,
+            num_attention_heads=config.num_attention_heads,
+            num_key_value_heads=config.num_key_value_heads,
+            head_dim=config.head_dim,
+            rms_norm_eps=config.rms_norm_eps,
+            attention_bias=config.attention_bias,
+            attention_dropout=config.attention_dropout,
+        )
         self.mlp = SwiGLUFeedForward(config.hidden_size, config.intermediate_size)
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
@@ -211,23 +219,11 @@ class Qwen3ForCausalLM(nn.Module):
             device=parameter.device,
         )
 
-    def reset_cache(self) -> None:
-        """Start a new request while retaining the existing cache allocation."""
-
-        if self._cache is None:
-            raise RuntimeError("KV cache is not set up")
-        self._cache.reset()
-
-    def release_cache(self) -> None:
-        """Release the model-owned request cache and its tensor storage."""
-
-        self._cache = None
-
     def _apply(self, fn, recurse: bool = True):
         # Device or dtype transformations invalidate the compatibility that
         # setup_cache established once. Reallocate afterward instead of paying
         # to validate stable cache properties during every generated token.
-        self.release_cache()
+        self._cache = None
         return super()._apply(fn, recurse=recurse)
 
     def load_checkpoint(self, checkpoint: SafeTensorCheckpoint) -> None:

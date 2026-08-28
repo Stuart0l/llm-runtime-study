@@ -114,7 +114,6 @@ class Engine:
         model = Qwen3ForCausalLM.from_model_dir(model_dir)
         model.config.validate_context_length(max_seq_len)
         model.requires_grad_(False)
-        model.eval()
         model.to(device=selected_device, dtype=selected_dtype)
         # Model precision applies to learned weights and activations, but RoPE
         # angles should still start from FP32 inverse frequencies. ``Module.to``

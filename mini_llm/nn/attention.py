@@ -9,7 +9,6 @@ from torch import nn
 from torch.nn import functional as F
 
 from mini_llm.cache import LayerKVCache
-from mini_llm.config import Qwen3Config
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys
 from mini_llm.nn.rope import apply_qwen3_rotary_position_embeddings
 
@@ -101,20 +100,6 @@ class Qwen3Attention(nn.Module):
         self.o_proj = nn.Linear(self.query_projection_size, hidden_size, bias=False)
         self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps)
-
-    @classmethod
-    def from_config(cls, config: Qwen3Config) -> "Qwen3Attention":
-        """Construct attention using a validated Qwen3 configuration."""
-
-        return cls(
-            hidden_size=config.hidden_size,
-            num_attention_heads=config.num_attention_heads,
-            num_key_value_heads=config.num_key_value_heads,
-            head_dim=config.head_dim,
-            rms_norm_eps=config.rms_norm_eps,
-            attention_bias=config.attention_bias,
-            attention_dropout=config.attention_dropout,
-        )
 
     def _split_heads(self, states: torch.Tensor, num_heads: int) -> torch.Tensor:
         batch_size, sequence_length, _ = states.shape

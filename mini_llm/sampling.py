@@ -77,8 +77,8 @@ def sample_next_token(
 ) -> int:
     """Return one token ID from a one-dimensional vocabulary-logit tensor."""
 
-    _validate_logits(logits)
     if config.temperature == 0:
+        _validate_logits(logits)
         return int(torch.argmax(logits).item())
 
     # Random sampling is deliberately performed in FP32 on CPU. This gives one
