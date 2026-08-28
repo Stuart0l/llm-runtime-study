@@ -7,7 +7,8 @@ the model. The trained tokenizer algorithm is reused through `tokenizers`.
 
 The runtime supports one active request with batch size one. It performs one
 prompt prefill followed by single-token decoding through a preallocated KV
-cache, and can run on Apple MPS or CPU.
+cache, can run on Apple MPS or CPU, and can expose synchronous OpenAI-compatible
+Chat Completions over HTTP.
 
 ## Setup
 
@@ -113,6 +114,60 @@ synchronized model-call duration when generation is run through `Engine`. The
 first event also carries the formatted prompt-token count already calculated by
 the generation loop, so benchmark consumers do not tokenize the prompt twice.
 
+## HTTP server
+
+Start one local server process with:
+
+```bash
+python -m mini_llm.server \
+  --model models/qwen3-0.6b \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --device auto \
+  --dtype auto \
+  --max-seq-len 4096
+```
+
+The model and tokenizer load once before the server accepts requests. The
+served model name defaults to the model directory name (`qwen3-0.6b` here).
+Use `--served-model-name NAME` to override it. The command always starts one
+worker because all requests share the model's mutable KV cache.
+
+Send a synchronous Chat Completions request:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3-0.6b",
+    "messages": [
+      {"role": "system", "content": "Answer briefly."},
+      {"role": "user", "content": "What does a KV cache store?"}
+    ],
+    "temperature": 0,
+    "max_completion_tokens": 64
+  }'
+```
+
+For an existing OpenAI-compatible client or UI, configure:
+
+```text
+base URL: http://127.0.0.1:8000/v1
+model:    qwen3-0.6b
+API key:  any placeholder if the client requires one
+```
+
+The server itself does not inspect an API key. It binds only to localhost by
+default; choosing another host can expose the unauthenticated server to the
+network. FastAPI's interactive schema is available at
+`http://127.0.0.1:8000/docs` while the server is running.
+
+This version supports text-only system, user, and assistant history, one
+completion, and ordinary JSON responses. HTTP streaming, tools, media,
+developer messages, penalties, stop strings, structured output, and
+authentication are not implemented. Concurrent valid requests wait in order
+and run one at a time so they never overwrite each other's KV cache.
+
 ## Execution architecture
 
 ```text
@@ -207,7 +262,8 @@ python -m unittest discover -s tests -v
 ```
 
 The suite includes a conditional real MPS test and an optional Hugging Face
-correctness oracle. They skip cleanly when MPS, Transformers, or the local
+correctness oracle. It also sends a conditional HTTP request through the real
+local checkpoint. These tests skip cleanly when MPS, Transformers, or the local
 checkpoint is unavailable.
 
 Focused educational demonstrations live in `examples/`:
@@ -219,6 +275,8 @@ python -m examples.checkpoint_inspect models/qwen3-0.6b
 python -m examples.cache_demo models/qwen3-0.6b
 python -m examples.generation_demo models/qwen3-0.6b
 python -m examples.engine_demo models/qwen3-0.6b
+python -m examples.chat_generation_demo models/qwen3-0.6b
+python -m examples.openai_adapter_demo
 ```
 
 ## Current scope
@@ -232,10 +290,11 @@ Implemented:
 - Dense preallocated KV cache.
 - Greedy, temperature, top-k, and top-p sampling.
 - Seeded generation, streaming text, CPU execution, and Apple MPS execution.
+- Synchronous OpenAI-compatible Chat Completions over FastAPI.
 
 Deferred:
 
-- HTTP serving and concurrent batching.
+- HTTP streaming and concurrent batching.
 - Paged attention.
 - Quantization.
 - Sharded checkpoints.

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 from dataclasses import dataclass
-from typing import Iterator, Protocol, Sequence
+from pathlib import Path
+import sys
+from typing import Iterator, Protocol, Sequence, TextIO
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+import uvicorn
 
 from mini_llm.cache import KVCacheError
+from mini_llm.checkpoint import CheckpointValidationError
+from mini_llm.config import ConfigError
+from mini_llm.engine import Engine, EngineError
 from mini_llm.generation import FinishReason, GenerationError, GenerationEvent
 from mini_llm.openai_api import (
     ChatCompletionRequest,
@@ -145,3 +152,83 @@ def _generate_completion(
         enable_thinking=False,
     )
     return _consume_generation(events)
+
+
+def _port_number(value: str) -> int:
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be within [1, 65535]")
+    return port
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m mini_llm.server",
+        description="Serve the local Qwen3 runtime through Chat Completions.",
+    )
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=_port_number, default=8000)
+    parser.add_argument("--served-model-name")
+    parser.add_argument("--max-seq-len", type=int, default=4096)
+    parser.add_argument("--device", choices=("auto", "cpu", "mps"), default="auto")
+    parser.add_argument(
+        "--dtype",
+        choices=("auto", "float16", "bfloat16", "float32"),
+        default="auto",
+    )
+    return parser
+
+
+def run_server(args: argparse.Namespace, *, output: TextIO) -> None:
+    """Load one engine, build one application, and start one Uvicorn worker."""
+
+    served_model = args.served_model_name or args.model.name
+    print(f"Loading {served_model} from {args.model}...", file=output, flush=True)
+    engine = Engine.from_model_dir(
+        args.model,
+        device=args.device,
+        dtype=args.dtype,
+        max_seq_len=args.max_seq_len,
+    )
+    app = create_app(engine, served_model=served_model)
+    print(
+        f"Loaded on {engine.device} with {engine.dtype} in "
+        f"{engine.load_seconds:.2f} s.",
+        file=output,
+        flush=True,
+    )
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        workers=1,
+    )
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    output: TextIO | None = None,
+    error: TextIO | None = None,
+) -> int:
+    output = sys.stdout if output is None else output
+    error = sys.stderr if error is None else error
+    args = build_parser().parse_args(argv)
+    try:
+        run_server(args, output=output)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=output)
+    except (
+        CheckpointValidationError,
+        ConfigError,
+        EngineError,
+        TokenizerError,
+    ) as exc:
+        print(f"error: {exc}", file=error)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
