@@ -8,9 +8,11 @@ version = "0.1.0"
 description = "A study-oriented Qwen3 inference runtime implemented with PyTorch"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115",
     "torch>=2.3",
     "safetensors>=0.4",
     "tokenizers>=0.20",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]

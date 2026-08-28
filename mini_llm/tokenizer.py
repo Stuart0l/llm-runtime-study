@@ -195,7 +195,7 @@ def format_qwen3_chat(
     multimodal content, and reasoning-history reconstruction are deferred.
     """
 
-    _validate_messages(messages, add_generation_prompt=add_generation_prompt)
+    validate_chat_messages(messages, add_generation_prompt=add_generation_prompt)
     tokens = QWEN3_CHAT_TOKENS
     prompt = "".join(
         f"{tokens.im_start}{message.role}\n{message.content}{tokens.im_end}\n"
@@ -208,9 +208,11 @@ def format_qwen3_chat(
     return prompt
 
 
-def _validate_messages(
+def validate_chat_messages(
     messages: Sequence[ChatMessage], *, add_generation_prompt: bool
 ) -> None:
+    """Validate the role ordering supported by the minimal chat runtime."""
+
     if not messages:
         raise TokenizerError("chat requires at least one message")
 
