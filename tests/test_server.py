@@ -20,7 +20,8 @@ from mini_llm.server import build_parser, create_app, main
 from mini_llm.tokenizer import ChatMessage
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class _FakeEngine:
@@ -358,40 +359,54 @@ class ServerCommandTests(unittest.TestCase):
             parser.parse_args(["--model", "model-dir", "--port", "70000"])
 
 
-@unittest.skipUnless(MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable")
 class RealCheckpointHTTPIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_real_cpu_checkpoint_serves_chat_completion(self) -> None:
+    async def _assert_real_cpu_checkpoint_serves(
+        self, model_dir: Path
+    ) -> None:
         engine = await asyncio.to_thread(
             Engine.from_model_dir,
-            MODEL_DIR,
+            model_dir,
             device="cpu",
             dtype="bfloat16",
             max_seq_len=128,
         )
-        app = create_app(engine, served_model="qwen3-0.6b")
+        served_model = model_dir.name
+        app = create_app(engine, served_model=served_model)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
         ) as client:
             response = await client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "qwen3-0.6b",
+                    "model": served_model,
                     "messages": [{"role": "user", "content": "Say hello."}],
                     "temperature": 0,
-                    "max_completion_tokens": 2,
+                    "max_completion_tokens": 1,
                 },
             )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["model"], "qwen3-0.6b")
+        self.assertEqual(body["model"], served_model)
         self.assertEqual(body["choices"][0]["message"]["role"], "assistant")
         self.assertIsInstance(body["choices"][0]["message"]["content"], str)
-        self.assertEqual(body["usage"]["completion_tokens"], 2)
+        self.assertEqual(body["usage"]["completion_tokens"], 1)
         self.assertEqual(
             body["usage"]["total_tokens"],
             body["usage"]["prompt_tokens"] + body["usage"]["completion_tokens"],
         )
+
+    @unittest.skipUnless(
+        QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+    )
+    async def test_real_qwen_cpu_checkpoint_serves_chat_completion(self) -> None:
+        await self._assert_real_cpu_checkpoint_serves(QWEN_MODEL_DIR)
+
+    @unittest.skipUnless(
+        GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+    )
+    async def test_real_granite_cpu_checkpoint_serves_chat_completion(self) -> None:
+        await self._assert_real_cpu_checkpoint_serves(GRANITE_MODEL_DIR)
 
 
 if __name__ == "__main__":

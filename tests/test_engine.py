@@ -12,7 +12,8 @@ from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class DeviceAndDtypeTests(unittest.TestCase):
@@ -54,14 +55,14 @@ class DeviceAndDtypeTests(unittest.TestCase):
 
 class EngineTests(unittest.TestCase):
     @patch("mini_llm.engine.synchronize_device")
+    @patch("mini_llm.engine.load_model")
+    @patch("mini_llm.engine.load_tokenizer")
     @patch("mini_llm.engine.load_config")
-    @patch("mini_llm.engine.Qwen3Tokenizer.from_model_dir")
-    @patch("mini_llm.engine.Qwen3ForCausalLM.from_model_dir")
     def test_from_model_dir_places_and_freezes_loaded_model(
         self,
-        load_model: MagicMock,
-        load_tokenizer: MagicMock,
         load_typed_config: MagicMock,
+        load_tokenizer: MagicMock,
+        load_model: MagicMock,
         synchronize: MagicMock,
     ) -> None:
         model = MagicMock()
@@ -69,7 +70,8 @@ class EngineTests(unittest.TestCase):
         load_model.return_value = model
         tokenizer = MagicMock()
         load_tokenizer.return_value = tokenizer
-        load_typed_config.return_value = MagicMock(spec=Qwen3Config)
+        config = MagicMock(spec=Qwen3Config)
+        load_typed_config.return_value = config
 
         engine = Engine.from_model_dir(
             Path("model"), device="cpu", dtype="float32", max_seq_len=128
@@ -82,23 +84,33 @@ class EngineTests(unittest.TestCase):
         synchronize.assert_called_once_with(torch.device("cpu"))
         self.assertIs(engine.model, model)
         self.assertIs(engine.tokenizer, tokenizer)
+        load_tokenizer.assert_called_once_with(Path("model"), model_config=config)
+        load_model.assert_called_once_with(Path("model"), model_config=config)
 
-    @patch("mini_llm.engine.Qwen3Tokenizer.from_model_dir")
-    @patch("mini_llm.engine.Qwen3ForCausalLM.from_model_dir")
+    @patch("mini_llm.engine.synchronize_device")
+    @patch("mini_llm.engine.load_model")
+    @patch("mini_llm.engine.load_tokenizer")
     @patch("mini_llm.engine.load_config")
-    def test_dispatch_recognizes_granite_before_model_loading(
+    def test_from_model_dir_loads_registered_granite_model(
         self,
         load_typed_config: MagicMock,
-        load_model: MagicMock,
         load_tokenizer: MagicMock,
+        load_model: MagicMock,
+        _synchronize: MagicMock,
     ) -> None:
-        load_typed_config.return_value = MagicMock(spec=GraniteMoeConfig)
+        config = MagicMock(spec=GraniteMoeConfig)
+        load_typed_config.return_value = config
+        model = MagicMock()
+        model.to.return_value = model
+        load_model.return_value = model
 
-        with self.assertRaisesRegex(EngineError, "later components"):
-            Engine.from_model_dir("granite", device="cpu")
+        engine = Engine.from_model_dir(
+            "granite", device="cpu", dtype="bfloat16", max_seq_len=128
+        )
 
-        load_model.assert_not_called()
-        load_tokenizer.assert_not_called()
+        self.assertIs(engine.model, model)
+        load_tokenizer.assert_called_once_with("granite", model_config=config)
+        load_model.assert_called_once_with("granite", model_config=config)
 
     @patch("mini_llm.engine.generate_text")
     def test_generate_forwards_complete_history_and_sampling(
@@ -142,14 +154,10 @@ class EngineTests(unittest.TestCase):
             synchronize=engine.synchronize,
         )
 
-@unittest.skipUnless(
-    torch.backends.mps.is_available() and MODEL_DIR.is_dir(),
-    "MPS or local Qwen3 checkpoint is unavailable",
-)
 class MPSEngineIntegrationTests(unittest.TestCase):
-    def test_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
+    def _assert_fp16_model_runs_on_mps(self, model_dir: Path) -> None:
         engine = Engine.from_model_dir(
-            MODEL_DIR, device="mps", dtype="auto", max_seq_len=128
+            model_dir, device="mps", dtype="auto", max_seq_len=128
         )
 
         events = list(
@@ -166,6 +174,20 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         )
         self.assertIsNotNone(engine.model.cache)
         self.assertEqual(engine.model.cache.device.type, "mps")
+
+    @unittest.skipUnless(
+        torch.backends.mps.is_available() and QWEN_MODEL_DIR.is_dir(),
+        "MPS or local Qwen3 checkpoint is unavailable",
+    )
+    def test_qwen_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
+        self._assert_fp16_model_runs_on_mps(QWEN_MODEL_DIR)
+
+    @unittest.skipUnless(
+        torch.backends.mps.is_available() and GRANITE_MODEL_DIR.is_dir(),
+        "MPS or local Granite checkpoint is unavailable",
+    )
+    def test_granite_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
+        self._assert_fp16_model_runs_on_mps(GRANITE_MODEL_DIR)
 
 
 if __name__ == "__main__":

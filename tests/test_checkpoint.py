@@ -21,7 +21,7 @@ from mini_llm.checkpoint import (
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
 GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
@@ -139,7 +139,7 @@ def save_sharded_checkpoint(
 
 class CheckpointSchemaTests(unittest.TestCase):
     def test_expected_local_model_schema_has_311_tensors(self) -> None:
-        config = Qwen3Config.from_model_dir(MODEL_DIR)
+        config = Qwen3Config.from_model_dir(QWEN_MODEL_DIR)
 
         specs = expected_qwen3_tensors(config)
 
@@ -379,12 +379,14 @@ class ShardedCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(CheckpointError, "shard does not exist"):
                 SafeTensorCheckpoint.from_model_dir(model_dir)
 
-@unittest.skipUnless(MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable")
+@unittest.skipUnless(
+    QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+)
 class LocalCheckpointIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.config = Qwen3Config.from_model_dir(MODEL_DIR)
-        cls.checkpoint = SafeTensorCheckpoint.from_model_dir(MODEL_DIR)
+        cls.config = Qwen3Config.from_model_dir(QWEN_MODEL_DIR)
+        cls.checkpoint = SafeTensorCheckpoint.from_model_dir(QWEN_MODEL_DIR)
 
     def test_local_checkpoint_matches_complete_schema(self) -> None:
         validate_qwen3_checkpoint(self.checkpoint, self.config)

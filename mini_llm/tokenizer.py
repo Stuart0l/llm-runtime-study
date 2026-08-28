@@ -310,10 +310,14 @@ TOKENIZER_TYPES: dict[str, type[TextTokenizer]] = {
 }
 
 
-def load_tokenizer(model_dir: str | Path) -> TextTokenizer:
+def load_tokenizer(
+    model_dir: str | Path,
+    *,
+    model_config: DecoderConfig | None = None,
+) -> TextTokenizer:
     """Load the registered tokenizer for a supported model configuration."""
 
-    config = load_config(model_dir)
+    config = load_config(model_dir) if model_config is None else model_config
     try:
         tokenizer_type = TOKENIZER_TYPES[config.model_type]
     except KeyError as exc:

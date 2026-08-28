@@ -15,7 +15,7 @@ from mini_llm.tokenizer import (
 from examples.tokenizer_demo import render_token_mapping
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
 GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
@@ -136,11 +136,13 @@ class ChatTemplateRegistrationTests(unittest.TestCase):
         self.assertIs(GraniteTokenizer.chat_template, GraniteChatTemplate)
 
 
-@unittest.skipUnless(MODEL_DIR.is_dir(), "local Qwen3 tokenizer is unavailable")
+@unittest.skipUnless(
+    QWEN_MODEL_DIR.is_dir(), "local Qwen3 tokenizer is unavailable"
+)
 class Qwen3TokenizerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.tokenizer = Qwen3Tokenizer.from_model_dir(MODEL_DIR)
+        cls.tokenizer = Qwen3Tokenizer.from_model_dir(QWEN_MODEL_DIR)
 
     def test_validates_special_token_ids(self) -> None:
         self.assertEqual(self.tokenizer.special_tokens.end_of_text, 151643)

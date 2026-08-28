@@ -1,14 +1,15 @@
-"""Compare greedy and seeded sampling strategies on one Qwen3 prompt."""
+"""Compare sampling strategies on one supported model."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
+from mini_llm.config import load_config
 from mini_llm.generation import generate
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.model_loader import load_model
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
+from mini_llm.tokenizer import ChatMessage, load_tokenizer
 
 
 def main() -> None:
@@ -18,8 +19,9 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=12)
     args = parser.parse_args()
 
-    tokenizer = Qwen3Tokenizer.from_model_dir(args.model_dir)
-    model = Qwen3ForCausalLM.from_model_dir(args.model_dir)
+    config = load_config(args.model_dir)
+    tokenizer = load_tokenizer(args.model_dir, model_config=config)
+    model = load_model(args.model_dir, model_config=config)
 
     strategies = {
         "greedy": SamplingConfig(temperature=0),

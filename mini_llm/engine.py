@@ -9,12 +9,12 @@ from typing import Iterator, Sequence
 
 import torch
 
-from mini_llm.config import GraniteMoeConfig, load_config
+from mini_llm.config import load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.model_loader import load_model
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import Qwen3Tokenizer
+from mini_llm.tokenizer import load_tokenizer
 
 
 class EngineError(ValueError):
@@ -59,9 +59,10 @@ def resolve_dtype(
     if requested == "auto":
         # Prefer FP16 rather than BF16 on MPS intentionally. BF16 spends more
         # bits on exponent range but has only 7 significand bits versus FP16's
-        # 10. Qwen's normalized inference activations usually do not need the
-        # extra range, while the coarser BF16 rounding can accumulate through
-        # attention, residuals, and MLPs and eventually change greedy tokens.
+        # 10. The supported models' normalized inference activations usually
+        # do not need the extra range, while coarser BF16 rounding can
+        # accumulate through attention, residuals, and feed-forward blocks and
+        # eventually change greedy tokens.
         # MPS attention kernels may also differ numerically from CPU kernels.
         # Keep BF16 available as an explicit override, but not the default.
         return torch.float16 if device.type == "mps" else torch.float32
@@ -113,13 +114,8 @@ class Engine:
         selected_dtype = resolve_dtype(dtype, device=selected_device)
         started = time.perf_counter()
         config = load_config(model_dir)
-        if isinstance(config, GraniteMoeConfig):
-            raise EngineError(
-                "Granite MoE configuration is recognized, but its model and "
-                "tokenizer are implemented in later components"
-            )
-        tokenizer = Qwen3Tokenizer.from_model_dir(model_dir, model_config=config)
-        model = Qwen3ForCausalLM.from_model_dir(model_dir)
+        tokenizer = load_tokenizer(model_dir, model_config=config)
+        model = load_model(model_dir, model_config=config)
         model.config.validate_context_length(max_seq_len)
         model.requires_grad_(False)
         model.to(device=selected_device, dtype=selected_dtype)

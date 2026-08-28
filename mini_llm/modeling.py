@@ -257,10 +257,24 @@ class CausalLMBase(nn.Module):
         self.materialize_derived_buffers("cpu")
 
     @classmethod
-    def from_model_dir(cls, model_dir: str | Path) -> Self:
+    def from_model_dir(
+        cls,
+        model_dir: str | Path,
+        *,
+        model_config: DecoderConfig | None = None,
+    ) -> Self:
         """Build on meta, strictly assign one checkpoint, and return an eval model."""
 
-        config = cls.config_class.from_model_dir(model_dir)
+        config = (
+            cls.config_class.from_model_dir(model_dir)
+            if model_config is None
+            else model_config
+        )
+        if not isinstance(config, cls.config_class):
+            raise TypeError(
+                f"{cls.__name__} requires {cls.config_class.__name__}, "
+                f"got {type(config).__name__}"
+            )
         checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
         with torch.device("meta"):
             model = cls(config)

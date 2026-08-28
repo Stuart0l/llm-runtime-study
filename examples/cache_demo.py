@@ -8,10 +8,9 @@ from pathlib import Path
 
 import torch
 
-from mini_llm.config import GraniteMoeConfig, load_config
-from mini_llm.granite_model import GraniteMoeForCausalLM
+from mini_llm.config import load_config
 from mini_llm.interfaces import ChatMessage
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.model_loader import load_model
 from mini_llm.tokenizer import load_tokenizer
 
 
@@ -33,17 +32,12 @@ def main() -> None:
         parser.error("--decode-steps must be positive")
 
     config = load_config(args.model_dir)
-    tokenizer = load_tokenizer(args.model_dir)
+    tokenizer = load_tokenizer(args.model_dir, model_config=config)
     prompt = tokenizer.format_chat(
         [ChatMessage(role="user", content=args.prompt)], enable_thinking=False
     )
     prompt_ids = tokenizer.encode(prompt)
-    model_type = (
-        GraniteMoeForCausalLM
-        if isinstance(config, GraniteMoeConfig)
-        else Qwen3ForCausalLM
-    )
-    model = model_type.from_model_dir(args.model_dir)
+    model = load_model(args.model_dir, model_config=config)
     model.setup_cache(len(prompt_ids) + args.decode_steps)
     full_ids = torch.tensor([prompt_ids], dtype=torch.long)
     device = full_ids.device

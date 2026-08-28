@@ -8,9 +8,8 @@ import time
 
 import torch
 
-from mini_llm.config import GraniteMoeConfig, load_config
-from mini_llm.granite_model import GraniteMoeForCausalLM
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.config import load_config
+from mini_llm.model_loader import load_model
 from mini_llm.tokenizer import load_tokenizer
 
 
@@ -21,16 +20,11 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.model_dir)
-    tokenizer = load_tokenizer(args.model_dir)
+    tokenizer = load_tokenizer(args.model_dir, model_config=config)
     input_ids = torch.tensor([tokenizer.encode(args.text)], dtype=torch.long)
 
     load_started = time.perf_counter()
-    model_type = (
-        GraniteMoeForCausalLM
-        if isinstance(config, GraniteMoeConfig)
-        else Qwen3ForCausalLM
-    )
-    model = model_type.from_model_dir(args.model_dir)
+    model = load_model(args.model_dir, model_config=config)
     load_seconds = time.perf_counter() - load_started
     with torch.inference_mode():
         forward_started = time.perf_counter()

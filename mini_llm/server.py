@@ -84,9 +84,8 @@ def create_app(engine: GenerationEngine, *, served_model: str) -> FastAPI:
         raise ValueError("served_model must not be empty")
     app = FastAPI(title="mini-llm", version="0.1.0")
     # Each loaded causal model owns one mutable KV cache. asyncio.Lock queues
-    # concurrent requests before they can enter generation.
-    # valid requests in acquisition order, and to_thread keeps the event loop
-    # responsive while the synchronous PyTorch generation call is running.
+    # valid concurrent requests in acquisition order, and to_thread keeps the
+    # event loop responsive while synchronous PyTorch generation is running.
     generation_lock = asyncio.Lock()
     app.state.engine = engine
     app.state.served_model = served_model
@@ -165,7 +164,7 @@ def _port_number(value: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m mini_llm.server",
-        description="Serve the local Qwen3 runtime through Chat Completions.",
+        description="Serve a supported local model through Chat Completions.",
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")

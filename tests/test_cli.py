@@ -13,7 +13,8 @@ from mini_llm.generation import GenerationEvent
 from mini_llm.tokenizer import ChatMessage
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class CLITests(unittest.TestCase):
@@ -242,16 +243,15 @@ class CLITests(unittest.TestCase):
         self.assertIn("temperature must be", error.getvalue())
 
 
-@unittest.skipUnless(MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable")
 class CLIIntegrationTests(unittest.TestCase):
-    def test_real_cpu_checkpoint_generates_text_and_metrics(self) -> None:
+    def _assert_real_cpu_checkpoint_generates(self, model_dir: Path) -> None:
         output = StringIO()
         error = StringIO()
 
         status = main(
             [
                 "--model",
-                str(MODEL_DIR),
+                str(model_dir),
                 "--prompt",
                 "Say hello.",
                 "--max-new-tokens",
@@ -271,6 +271,18 @@ class CLIIntegrationTests(unittest.TestCase):
         self.assertIn("metrics", output.getvalue())
         self.assertIn("generated tokens:    1", output.getvalue())
         self.assertIn("device:              cpu", output.getvalue())
+
+    @unittest.skipUnless(
+        QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+    )
+    def test_real_qwen_cpu_checkpoint_generates_text_and_metrics(self) -> None:
+        self._assert_real_cpu_checkpoint_generates(QWEN_MODEL_DIR)
+
+    @unittest.skipUnless(
+        GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+    )
+    def test_real_granite_cpu_checkpoint_generates_text_and_metrics(self) -> None:
+        self._assert_real_cpu_checkpoint_generates(GRANITE_MODEL_DIR)
 
 
 if __name__ == "__main__":

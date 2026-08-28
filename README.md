@@ -1,9 +1,9 @@
-# Mini Qwen3 Inference Runtime
+# Mini LLM Inference Runtime
 
 This project is a small, study-oriented text-generation runtime for Qwen3
-Safetensors checkpoints, including Qwen3-0.6B and Qwen3-1.7B. The transformer
+dense checkpoints and IBM Granite 3.1 sparse-MoE checkpoints. The transformer
 execution path is implemented directly with PyTorch; it does not use
-Transformers to load or run the model. The trained tokenizer algorithm is
+Transformers to load or run a model. The trained tokenizer algorithms are
 reused through `tokenizers`.
 
 The runtime supports one active request with batch size one. It performs one
@@ -21,8 +21,8 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Place a Qwen3 model directory at `models/qwen3-0.6b`. A single-file checkpoint
-contains at least:
+Place a supported Hugging Face model directory under `models/`. A single-file
+Qwen checkpoint contains at least:
 
 ```text
 models/qwen3-0.6b/
@@ -32,8 +32,9 @@ models/qwen3-0.6b/
 └── tokenizer_config.json
 ```
 
-The runtime also supports standard indexed Safetensors checkpoints such as
-Qwen3-1.7B:
+The Granite model uses the same four required files in a directory such as
+`models/granite-3.1-1b`. The runtime also supports standard indexed
+Safetensors checkpoints such as Qwen3-1.7B:
 
 ```text
 models/qwen3-1.7b/
@@ -45,8 +46,8 @@ models/qwen3-1.7b/
 └── tokenizer_config.json
 ```
 
-The runtime reads every shard header into one combined manifest. The existing
-Qwen3 schema validator then checks all tensor names, shapes, and dtypes before
+The runtime reads every shard header into one combined manifest. The registered
+architecture schema then checks all tensor names, shapes, and dtypes before
 model weights are loaded. Shard indexes are treated as trusted model files.
 
 ## Generate text
@@ -59,9 +60,10 @@ python -m mini_llm \
   --temperature 0
 ```
 
-The prompt is raw user text. The runtime applies Qwen3's chat template and
-tokenizes it internally. Generated text streams to the terminal, followed by a
-benchmark summary.
+The prompt is raw user text. The runtime selects the model's chat template and
+tokenizer automatically. Generated text streams to the terminal, followed by a
+benchmark summary. Substitute `models/granite-3.1-1b` in the same command to
+run Granite.
 
 To load the model once and enter multiple independent prompts, use interactive
 mode:
@@ -96,11 +98,12 @@ Useful options:
 --no-metrics
 ```
 
+`--thinking` is a Qwen3 chat-template option; Granite rejects it explicitly.
+
 `device=auto` selects MPS when available and otherwise CPU. `dtype=auto`
-selects FP16 on MPS and FP32 on CPU. MPS FP16 is intentional: for Qwen's
-normalized inference activations its finer significand precision is generally
-more useful than BF16's larger exponent range. BF16 remains available as an
-explicit override.
+selects FP16 on MPS and FP32 on CPU. MPS FP16 is intentional: its finer
+significand precision avoids some accumulated BF16 rounding observed in these
+models. BF16 remains available as an explicit override.
 
 ## Python API
 
@@ -190,7 +193,7 @@ and run one at a time so they never overwrite each other's KV cache.
 raw user prompt
       │
       ▼
-Qwen chat formatting → tokenizer → prompt token IDs
+architecture chat formatting → tokenizer → prompt token IDs
       │
       ▼
 one full-sequence prefill
@@ -208,7 +211,7 @@ single-token decode → append one K/V position → next token
                 repeat until EOS, token limit, or context limit
 ```
 
-The model itself is composed as:
+Qwen uses dense SwiGLU decoder layers:
 
 ```text
 token IDs
@@ -225,6 +228,11 @@ token IDs
   → vocabulary logits
 ```
 
+Granite uses 24 decoder layers without Q/K normalization. Each layer replaces
+the dense MLP with a top-8-of-32 packed SwiGLU expert block, scales embeddings
+by 12, scales attention and MoE residual branches by 0.22, ties the vocabulary
+projection to the embedding matrix, and divides final logits by 6.
+
 ## KV cache
 
 Each layer owns preallocated key and value tensors:
@@ -233,9 +241,9 @@ Each layer owns preallocated key and value tensors:
 [1, num_kv_heads, capacity, head_dim]
 ```
 
-For Qwen3-0.6B this is `[1, 8, capacity, 128]`. The cache stores the original
-eight grouped-query K/V heads; expansion to sixteen query heads happens only
-inside attention computation.
+For Qwen3-0.6B this is `[1, 8, capacity, 128]`; for Granite it is
+`[1, 8, capacity, 64]`. The cache stores the original grouped-query K/V heads;
+expansion to query-head count happens only inside attention computation.
 
 Cache memory is:
 
@@ -278,9 +286,9 @@ python -m unittest discover -s tests -v
 ```
 
 The suite includes a conditional real MPS test and an optional Hugging Face
-correctness oracle. It also sends a conditional HTTP request through the real
-local checkpoint. These tests skip cleanly when MPS, Transformers, or the local
-checkpoint is unavailable.
+correctness oracle for both architectures. It also sends conditional CLI and
+HTTP requests through the real local checkpoints. These tests skip cleanly
+when MPS, Transformers, or a local checkpoint is unavailable.
 
 Focused educational demonstrations live in `examples/`:
 
@@ -299,10 +307,11 @@ python -m examples.openai_adapter_demo
 
 Implemented:
 
-- Qwen3 architecture only.
+- Qwen3 dense and Granite 3.1 sparse-MoE architectures.
 - Single request and batch size one.
 - Single-file and indexed sharded Safetensors loading without Transformers.
-- RMSNorm, Q/K normalization, RoPE, SwiGLU, and grouped-query attention.
+- RMSNorm, optional Q/K normalization, RoPE, SwiGLU, grouped-query attention,
+  and top-k packed-expert routing.
 - Dense preallocated KV cache.
 - Greedy, temperature, top-k, and top-p sampling.
 - Seeded generation, streaming text, CPU execution, and Apple MPS execution.
@@ -314,4 +323,4 @@ Deferred:
 - Paged attention.
 - Quantization.
 - Sliding-window cache eviction.
-- Other model architectures.
+- Additional model architectures.

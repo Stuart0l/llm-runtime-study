@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-llm"
 version = "0.1.0"
-description = "A study-oriented Qwen3 inference runtime implemented with PyTorch"
+description = "A study-oriented Qwen3 and Granite MoE runtime implemented with PyTorch"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

@@ -32,7 +32,7 @@ class RunMetrics:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m mini_llm",
-        description="Run the study-oriented Qwen3 inference runtime.",
+        description="Run a supported model with the study-oriented inference runtime.",
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument(
