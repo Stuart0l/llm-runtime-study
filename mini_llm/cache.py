@@ -1,4 +1,4 @@
-"""Preallocated dense KV cache for single-request Qwen3 inference."""
+"""Preallocated dense KV cache shared by decoder-only architectures."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
-from mini_llm.config import Qwen3Config
+from mini_llm.config import DecoderConfig
 
 
 class KVCacheError(ValueError):
@@ -112,12 +112,12 @@ class LayerKVCache:
         self.length = 0
 
 
-class Qwen3KVCache:
+class DenseKVCache:
     """One preallocated :class:`LayerKVCache` for every decoder layer."""
 
     def __init__(
         self,
-        config: Qwen3Config,
+        config: DecoderConfig,
         capacity: int,
         *,
         dtype: torch.dtype,

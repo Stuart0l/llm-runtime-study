@@ -15,7 +15,7 @@ from mini_llm.sampling import (
     make_generator,
     sample_next_token,
 )
-from mini_llm.tokenizer import ChatMessage, TokenizerError
+from mini_llm.tokenizer import ChatMessage, TokenizerError, format_qwen3_chat
 
 
 class SamplingTests(unittest.TestCase):
@@ -88,12 +88,18 @@ class _FakeTokenizer:
         self.encoded_text = text
         return self.prompt_ids
 
+    def format_chat(self, messages, *, enable_thinking=False) -> str:
+        return format_qwen3_chat(messages, enable_thinking=enable_thinking)
+
     def decode(self, token_ids, *, skip_special_tokens=False) -> str:
         self.decoded_token_ids.append(list(token_ids))
         return "".join(self.pieces[token_id] for token_id in token_ids)
 
 
 class _SplitUnicodeTokenizer:
+    def format_chat(self, messages, *, enable_thinking=False) -> str:
+        return format_qwen3_chat(messages, enable_thinking=enable_thinking)
+
     def encode(self, text: str) -> list[int]:
         return [0]
 
@@ -121,6 +127,10 @@ class _FakeModel(nn.Module):
         self.prefill_calls = 0
         self.decode_inputs: list[int] = []
         self.cache_capacity: int | None = None
+
+    @property
+    def input_device(self) -> torch.device:
+        return self.anchor.device
 
     def setup_cache(self, capacity: int) -> None:
         self.cache_capacity = capacity

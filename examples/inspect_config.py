@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from mini_llm.config import ConfigError, Qwen3Config
+from mini_llm.config import ConfigError, GraniteMoeConfig, ModelConfig, load_config
 
 
 def _format_bytes(size: int) -> str:
@@ -21,7 +21,7 @@ def _format_bytes(size: int) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate and summarize a local Qwen3 model configuration."
+        description="Validate and summarize a supported local model configuration."
     )
     parser.add_argument("model_dir", type=Path, help="directory containing config.json")
     parser.add_argument(
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def render_summary(
-    config: Qwen3Config,
+    config: ModelConfig,
     *,
     model_dir: Path,
     max_seq_len: int,
@@ -58,8 +58,9 @@ def render_summary(
     )
     architecture = ", ".join(config.architectures) or "(not declared)"
     eos = ", ".join(str(item) for item in config.eos_token_ids)
+    family_name = "Qwen3" if config.model_type == "qwen3" else "Granite MoE"
     lines = [
-        "Qwen3 configuration: valid",
+        f"{family_name} configuration: valid",
         f"  model directory:       {model_dir}",
         f"  architecture:          {architecture}",
         f"  checkpoint dtype:      {config.torch_dtype}",
@@ -74,18 +75,37 @@ def render_summary(
         f"  maximum positions:     {config.max_position_embeddings:,}",
         f"  RoPE theta:            {config.rope_theta:g}",
         f"  BOS / EOS token IDs:   {config.bos_token_id} / {eos}",
-        "KV-cache estimate:",
-        f"  capacity / batch:      {max_seq_len:,} / {batch_size}",
-        f"  dtype:                 {cache_dtype}",
-        f"  total:                 {_format_bytes(cache_bytes)} ({cache_bytes:,} bytes)",
     ]
+    if isinstance(config, GraniteMoeConfig):
+        lines.extend(
+            [
+                "Mixture of experts:",
+                f"  total / active:        {config.num_local_experts} / "
+                f"{config.num_experts_per_tok} per token",
+                f"  parameters per expert: {config.parameters_per_expert:,}",
+                f"  total parameters:      {config.total_parameter_estimate:,}",
+                f"  active parameters:     {config.active_parameter_estimate:,}",
+                f"  embedding multiplier:  {config.embedding_multiplier:g}",
+                f"  residual multiplier:   {config.residual_multiplier:g}",
+                f"  attention multiplier:  {config.attention_multiplier:g}",
+                f"  logits scaling:        {config.logits_scaling:g}",
+            ]
+        )
+    lines.extend(
+        [
+            "KV-cache estimate:",
+            f"  capacity / batch:      {max_seq_len:,} / {batch_size}",
+            f"  dtype:                 {cache_dtype}",
+            f"  total:                 {_format_bytes(cache_bytes)} ({cache_bytes:,} bytes)",
+        ]
+    )
     return "\n".join(lines)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        config = Qwen3Config.from_model_dir(args.model_dir)
+        config = load_config(args.model_dir)
         summary = render_summary(
             config,
             model_dir=args.model_dir,

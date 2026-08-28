@@ -6,6 +6,7 @@ import unittest
 
 import torch
 
+from mini_llm.config import GraniteMoeConfig, Qwen3Config
 from mini_llm.engine import Engine, EngineError, resolve_device, resolve_dtype
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage
@@ -53,12 +54,14 @@ class DeviceAndDtypeTests(unittest.TestCase):
 
 class EngineTests(unittest.TestCase):
     @patch("mini_llm.engine.synchronize_device")
+    @patch("mini_llm.engine.load_config")
     @patch("mini_llm.engine.Qwen3Tokenizer.from_model_dir")
     @patch("mini_llm.engine.Qwen3ForCausalLM.from_model_dir")
     def test_from_model_dir_places_and_freezes_loaded_model(
         self,
         load_model: MagicMock,
         load_tokenizer: MagicMock,
+        load_typed_config: MagicMock,
         synchronize: MagicMock,
     ) -> None:
         model = MagicMock()
@@ -66,6 +69,7 @@ class EngineTests(unittest.TestCase):
         load_model.return_value = model
         tokenizer = MagicMock()
         load_tokenizer.return_value = tokenizer
+        load_typed_config.return_value = MagicMock(spec=Qwen3Config)
 
         engine = Engine.from_model_dir(
             Path("model"), device="cpu", dtype="float32", max_seq_len=128
@@ -74,10 +78,27 @@ class EngineTests(unittest.TestCase):
         model.config.validate_context_length.assert_called_once_with(128)
         model.requires_grad_.assert_called_once_with(False)
         model.to.assert_called_once_with(device=torch.device("cpu"), dtype=torch.float32)
-        model.model.rotary_emb.materialize.assert_called_once_with(torch.device("cpu"))
+        model.materialize_derived_buffers.assert_called_once_with(torch.device("cpu"))
         synchronize.assert_called_once_with(torch.device("cpu"))
         self.assertIs(engine.model, model)
         self.assertIs(engine.tokenizer, tokenizer)
+
+    @patch("mini_llm.engine.Qwen3Tokenizer.from_model_dir")
+    @patch("mini_llm.engine.Qwen3ForCausalLM.from_model_dir")
+    @patch("mini_llm.engine.load_config")
+    def test_dispatch_recognizes_granite_before_model_loading(
+        self,
+        load_typed_config: MagicMock,
+        load_model: MagicMock,
+        load_tokenizer: MagicMock,
+    ) -> None:
+        load_typed_config.return_value = MagicMock(spec=GraniteMoeConfig)
+
+        with self.assertRaisesRegex(EngineError, "later components"):
+            Engine.from_model_dir("granite", device="cpu")
+
+        load_model.assert_not_called()
+        load_tokenizer.assert_not_called()
 
     @patch("mini_llm.engine.generate_text")
     def test_generate_forwards_complete_history_and_sampling(

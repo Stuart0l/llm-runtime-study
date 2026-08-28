@@ -1,4 +1,4 @@
-"""High-level Qwen3 runtime with explicit device and precision placement."""
+"""High-level runtime with explicit architecture and device selection."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ from typing import Iterator, Sequence
 
 import torch
 
+from mini_llm.config import GraniteMoeConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
+from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.model import Qwen3ForCausalLM
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer
+from mini_llm.tokenizer import Qwen3Tokenizer
 
 
 class EngineError(ValueError):
@@ -89,8 +91,8 @@ def synchronize_device(device: torch.device) -> None:
 class Engine:
     """Loaded model, tokenizer, placement policy, and one-request runtime."""
 
-    model: Qwen3ForCausalLM
-    tokenizer: Qwen3Tokenizer
+    model: RuntimeCausalLM
+    tokenizer: RuntimeTokenizer
     device: torch.device
     dtype: torch.dtype
     max_seq_len: int
@@ -105,11 +107,17 @@ class Engine:
         dtype: str | torch.dtype = "auto",
         max_seq_len: int = 4096,
     ) -> "Engine":
-        """Load and place one Qwen3 checkpoint for inference."""
+        """Select, load, and place one supported checkpoint for inference."""
 
         selected_device = resolve_device(device)
         selected_dtype = resolve_dtype(dtype, device=selected_device)
         started = time.perf_counter()
+        config = load_config(model_dir)
+        if isinstance(config, GraniteMoeConfig):
+            raise EngineError(
+                "Granite MoE configuration is recognized, but its model and "
+                "tokenizer are implemented in later components"
+            )
         tokenizer = Qwen3Tokenizer.from_model_dir(model_dir)
         model = Qwen3ForCausalLM.from_model_dir(model_dir)
         model.config.validate_context_length(max_seq_len)
@@ -119,7 +127,7 @@ class Engine:
         # angles should still start from FP32 inverse frequencies. ``Module.to``
         # converts every floating buffer, so reconstruct this derived buffer on
         # the selected device after placement.
-        model.model.rotary_emb.materialize(selected_device)
+        model.materialize_derived_buffers(selected_device)
         synchronize_device(selected_device)
         load_seconds = time.perf_counter() - started
         return cls(

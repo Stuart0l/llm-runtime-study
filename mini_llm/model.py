@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from mini_llm.cache import LayerKVCache, Qwen3KVCache
+from mini_llm.cache import DenseKVCache, LayerKVCache
 from mini_llm.checkpoint import (
     CheckpointValidationError,
     SafeTensorCheckpoint,
@@ -145,7 +145,7 @@ class Qwen3ForCausalLM(nn.Module):
         self.config = config
         self.model = Qwen3Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self._cache: Qwen3KVCache | None = None
+        self._cache: DenseKVCache | None = None
 
     def forward(
         self,
@@ -201,10 +201,21 @@ class Qwen3ForCausalLM(nn.Module):
         return self.lm_head(hidden_states)
 
     @property
-    def cache(self) -> Qwen3KVCache | None:
+    def cache(self) -> DenseKVCache | None:
         """The model-owned cache for its one active request, if allocated."""
 
         return self._cache
+
+    @property
+    def input_device(self) -> torch.device:
+        """Device on which token IDs must be created for this model."""
+
+        return self.model.embed_tokens.weight.device
+
+    def materialize_derived_buffers(self, device: torch.device) -> None:
+        """Rebuild non-checkpoint tensors after model placement."""
+
+        self.model.rotary_emb.materialize(device)
 
     def setup_cache(self, capacity: int) -> None:
         """Ensure reusable model-owned cache storage for one active request."""
@@ -222,7 +233,7 @@ class Qwen3ForCausalLM(nn.Module):
             self._cache.reset()
             return
         self._cache = None
-        self._cache = Qwen3KVCache(
+        self._cache = DenseKVCache(
             self.config,
             capacity,
             dtype=parameter.dtype,

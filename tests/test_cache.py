@@ -4,8 +4,10 @@ import unittest
 
 import torch
 
-from mini_llm.cache import KVCacheError, LayerKVCache, Qwen3KVCache
+from mini_llm.cache import DenseKVCache, KVCacheError, LayerKVCache
+from mini_llm.config import GraniteMoeConfig
 from mini_llm.model import Qwen3ForCausalLM
+from tests.test_config import valid_granite_config
 from tests.test_model import _tiny_config
 
 
@@ -44,10 +46,21 @@ class LayerKVCacheTests(unittest.TestCase):
         self.assertEqual(cache.length, 2)
 
 
-class Qwen3KVCacheTests(unittest.TestCase):
+class DenseKVCacheTests(unittest.TestCase):
+    def test_allocates_from_granite_decoder_config(self) -> None:
+        config = GraniteMoeConfig.from_dict(valid_granite_config())
+
+        cache = DenseKVCache(
+            config, capacity=2, dtype=torch.float16, device="cpu"
+        )
+
+        self.assertEqual(len(cache.layers), 24)
+        self.assertEqual(cache.layers[0].keys.shape, (1, 8, 2, 64))
+        self.assertEqual(cache.num_bytes, config.kv_cache_bytes(2))
+
     def test_allocates_one_original_kv_head_pair_per_layer(self) -> None:
         config = _tiny_config()
-        cache = Qwen3KVCache(
+        cache = DenseKVCache(
             config, capacity=6, dtype=torch.float32, device="cpu"
         )
 

@@ -8,9 +8,8 @@ from typing import Callable, Iterator, Literal, Sequence, TypeVar
 
 import torch
 
-from mini_llm.model import Qwen3ForCausalLM
+from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.sampling import SamplingConfig, make_generator, sample_next_token
-from mini_llm.tokenizer import ChatMessage, Qwen3Tokenizer, format_qwen3_chat
 
 
 class GenerationError(ValueError):
@@ -36,7 +35,7 @@ class GenerationEvent:
 class IncrementalTextDecoder:
     """Decode only tokens not already emitted as stable Unicode text."""
 
-    def __init__(self, tokenizer: Qwen3Tokenizer) -> None:
+    def __init__(self, tokenizer: RuntimeTokenizer) -> None:
         self.tokenizer = tokenizer
         self.pending_token_ids: list[int] = []
         self.text = ""
@@ -74,8 +73,8 @@ def _run_model_call(
 
 
 def generate(
-    model: Qwen3ForCausalLM,
-    tokenizer: Qwen3Tokenizer,
+    model: RuntimeCausalLM,
+    tokenizer: RuntimeTokenizer,
     messages: Sequence[ChatMessage],
     *,
     max_new_tokens: int,
@@ -94,9 +93,8 @@ def generate(
 
     if max_new_tokens <= 0:
         raise GenerationError("max_new_tokens must be positive")
-    formatted_prompt = format_qwen3_chat(
-        messages,
-        enable_thinking=enable_thinking,
+    formatted_prompt = tokenizer.format_chat(
+        messages, enable_thinking=enable_thinking
     )
     prompt_token_ids = tokenizer.encode(formatted_prompt)
 
@@ -131,7 +129,7 @@ def generate(
             )
             return
 
-        device = model.model.embed_tokens.weight.device
+        device = model.input_device
         prompt_tokens = torch.tensor(
             [prompt_token_ids], dtype=torch.long, device=device
         )

@@ -11,23 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Sequence
 
 from tokenizers import Tokenizer
 
 from mini_llm.config import Qwen3Config
+from mini_llm.interfaces import ChatMessage
 
 
 class TokenizerError(ValueError):
     """Raised when tokenizer artifacts or chat messages are invalid."""
-
-
-@dataclass(frozen=True, slots=True)
-class ChatMessage:
-    """One textual message in the minimal Qwen3 chat protocol."""
-
-    role: Literal["system", "user", "assistant"]
-    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +174,16 @@ class Qwen3Tokenizer:
         return self._tokenizer.decode(
             list(token_ids), skip_special_tokens=skip_special_tokens
         )
+
+    def format_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        enable_thinking: bool = False,
+    ) -> str:
+        """Serialize messages using Qwen3's architecture-specific protocol."""
+
+        return format_qwen3_chat(messages, enable_thinking=enable_thinking)
 
 
 def format_qwen3_chat(
