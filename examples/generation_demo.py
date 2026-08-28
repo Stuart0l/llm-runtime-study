@@ -38,9 +38,7 @@ def main() -> None:
             )
         )
         final = events[-1]
-        token_ids = [event.token_id for event in events if event.token_id is not None]
-        print(f"{name:>7}: tokens={token_ids}")
-        print(f"         text={final.text!r} stop={final.finish_reason}")
+        print(f"{name:>7}: text={final.text!r} stop={final.finish_reason}")
 
 
 if __name__ == "__main__":

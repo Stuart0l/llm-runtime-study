@@ -65,6 +65,7 @@ def generate(
     max_new_tokens: int,
     sampling: SamplingConfig = SamplingConfig(),
     enable_thinking: bool = False,
+    max_seq_len: int | None = None,
 ) -> Iterator[GenerationEvent]:
     """Format a raw user prompt and stream one cache-backed response.
 
@@ -84,7 +85,13 @@ def generate(
     prompt_token_ids = tokenizer.encode(formatted_prompt)
 
     prompt_length = len(prompt_token_ids)
-    context_limit = model.config.max_position_embeddings
+    model_context_limit = model.config.max_position_embeddings
+    context_limit = model_context_limit if max_seq_len is None else max_seq_len
+    if context_limit <= 0 or context_limit > model_context_limit:
+        raise GenerationError(
+            f"max_seq_len must be within [1, {model_context_limit}], got "
+            f"{context_limit}"
+        )
     if prompt_length > context_limit:
         raise GenerationError(
             f"prompt has {prompt_length} tokens but model context limit is "
