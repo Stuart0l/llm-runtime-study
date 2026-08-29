@@ -55,6 +55,16 @@ class DeviceAndDtypeTests(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
+    def _mock_engine(self) -> Engine:
+        return Engine(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            max_seq_len=256,
+            load_seconds=1.0,
+        )
+
     @patch("mini_llm.engine.synchronize_device")
     @patch("mini_llm.engine.load_model")
     @patch("mini_llm.engine.load_tokenizer")
@@ -68,6 +78,10 @@ class EngineTests(unittest.TestCase):
     ) -> None:
         model = MagicMock()
         model.to.return_value = model
+        model.input_device = torch.device("cpu")
+        model.parameters.return_value = iter(
+            [MagicMock(dtype=torch.bfloat16)]
+        )
         load_model.return_value = model
         tokenizer = MagicMock()
         load_tokenizer.return_value = tokenizer
@@ -103,6 +117,10 @@ class EngineTests(unittest.TestCase):
         load_typed_config.return_value = config
         model = MagicMock()
         model.to.return_value = model
+        model.input_device = torch.device("cpu")
+        model.parameters.return_value = iter(
+            [MagicMock(dtype=torch.bfloat16)]
+        )
         load_model.return_value = model
 
         engine = Engine.from_model_dir(
@@ -154,6 +172,86 @@ class EngineTests(unittest.TestCase):
             max_seq_len=256,
             synchronize=engine.synchronize,
         )
+
+    @patch("mini_llm.engine.synchronize_device")
+    def test_to_moves_resident_model_and_updates_placement(
+        self, synchronize: MagicMock
+    ) -> None:
+        engine = self._mock_engine()
+
+        result = engine.to(device="cpu", dtype="float16")
+
+        self.assertIs(result, engine)
+        engine.model.to.assert_called_once_with(
+            device=torch.device("cpu"), dtype=torch.float16
+        )
+        engine.model.materialize_derived_buffers.assert_called_once_with(
+            torch.device("cpu")
+        )
+        synchronize.assert_called_once_with(torch.device("cpu"))
+        self.assertEqual(engine.device, torch.device("cpu"))
+        self.assertEqual(engine.dtype, torch.float16)
+
+    @patch("mini_llm.engine.synchronize_device")
+    def test_to_retains_omitted_dtype_when_changing_device(
+        self, synchronize: MagicMock
+    ) -> None:
+        engine = self._mock_engine()
+        with patch("torch.backends.mps.is_available", return_value=True):
+            engine.to(device="mps")
+
+        engine.model.to.assert_called_once_with(
+            device=torch.device("mps"), dtype=torch.float32
+        )
+        self.assertEqual(engine.device, torch.device("mps"))
+        self.assertEqual(engine.dtype, torch.float32)
+        synchronize.assert_called_once_with(torch.device("mps"))
+
+    @patch("mini_llm.engine.synchronize_device")
+    def test_to_resolves_auto_dtype_for_destination(
+        self, synchronize: MagicMock
+    ) -> None:
+        engine = self._mock_engine()
+        with patch("torch.backends.mps.is_available", return_value=True):
+            engine.to(device="mps", dtype="auto")
+
+        self.assertEqual(engine.dtype, torch.float16)
+        engine.model.to.assert_called_once_with(
+            device=torch.device("mps"), dtype=torch.float16
+        )
+        synchronize.assert_called_once_with(torch.device("mps"))
+
+    @patch("mini_llm.engine.synchronize_device")
+    def test_to_is_noop_for_existing_placement(
+        self, synchronize: MagicMock
+    ) -> None:
+        engine = self._mock_engine()
+
+        result = engine.to()
+
+        self.assertIs(result, engine)
+        engine.model.to.assert_not_called()
+        engine.model.materialize_derived_buffers.assert_not_called()
+        synchronize.assert_not_called()
+
+    @patch("mini_llm.engine.load_model")
+    @patch("mini_llm.engine.load_tokenizer")
+    @patch("mini_llm.engine.load_config")
+    @patch("mini_llm.engine.synchronize_device")
+    def test_to_never_reloads_model_or_tokenizer(
+        self,
+        _synchronize: MagicMock,
+        load_config: MagicMock,
+        load_tokenizer: MagicMock,
+        load_model: MagicMock,
+    ) -> None:
+        engine = self._mock_engine()
+
+        engine.to(dtype="float16")
+
+        load_config.assert_not_called()
+        load_tokenizer.assert_not_called()
+        load_model.assert_not_called()
 
 class MPSEngineIntegrationTests(unittest.TestCase):
     def _assert_fp16_model_runs_on_mps(self, model_dir: Path) -> None:
@@ -226,6 +324,33 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         ]
 
         self.assertEqual(mps_token_ids, cpu_token_ids)
+
+    @unittest.skipUnless(
+        torch.backends.mps.is_available() and QWEN_MODEL_DIR.is_dir(),
+        "MPS or local Qwen3 checkpoint is unavailable",
+    )
+    def test_loaded_cpu_engine_moves_to_mps_without_reloading(self) -> None:
+        engine = Engine.from_model_dir(
+            QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
+        )
+        list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
+        self.assertIsNotNone(engine.model.cache)
+
+        result = engine.to(device="mps")
+
+        self.assertIs(result, engine)
+        self.assertIsNone(engine.model.cache)
+        self.assertEqual(engine.device, torch.device("mps"))
+        self.assertEqual(engine.dtype, torch.float16)
+        self.assertEqual(engine.model.input_device.type, "mps")
+        self.assertEqual(
+            engine.model.model.rotary_emb.inverse_frequencies.dtype,
+            torch.float32,
+        )
+        events = list(
+            engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1)
+        )
+        self.assertTrue(events)
 
 
 if __name__ == "__main__":

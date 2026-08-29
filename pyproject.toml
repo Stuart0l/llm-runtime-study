@@ -24,7 +24,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["mini_llm*"]
+include = ["mini_llm*", "benchmarks*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -133,6 +133,17 @@ for event in engine.generate(
     print(event.text_delta, end="", flush=True)
 ```
 
+Move the already-loaded model without reading its checkpoint again:
+
+```python
+engine.to(device="mps", dtype="float16")
+```
+
+Moving invalidates the device-specific KV cache and rebuilds RoPE's derived
+FP32 frequencies on the destination. Dtype conversion changes the resident
+weights: widening after a lossy downcast does not restore the checkpoint's
+original precision.
+
 Each event contains the new stable text in `text_delta`, the complete emitted
 text in `text`, the generated token index, an optional finish reason, and the
 synchronized model-call duration when generation is run through `Engine`. The
@@ -272,28 +283,55 @@ layers × 2(K,V) × KV heads × capacity × head dimension × bytes per value
 Resetting changes only the logical length, so the allocated tensors can be
 reused by the next request.
 
-## Benchmark metrics
+## Benchmarks
 
-The CLI reports:
+Run every applicable suite with one checkpoint load:
 
-- Model and tokenizer load time.
-- Formatted prompt-token count.
-- Generated-token count.
-- Allocated cache size and capacity.
-- End-to-end time to first token (TTFT).
-- Decode tokens per second, excluding the token produced by prefill.
-- The termination reason.
+```bash
+python -m benchmarks --model models/granite-3.1-1b
+```
 
-MPS operations are asynchronous. Timing therefore synchronizes the device at
-the measurement boundaries; without synchronization, the CPU clock would stop
-before GPU work completed. TTFT includes prompt preparation, cache setup,
-prefill, first-token selection, and incremental decoding, making it more useful
-to users than a nearly identical standalone prefill-latency number.
+Or select suites and inputs explicitly:
 
-Prefill and decode measure different workloads. Prefill applies model weights
-to many prompt tokens in parallel and benefits strongly from GPU matrix-matrix
-operations. Batch-one decode applies the weights to one token at a time and is
-usually memory-bandwidth-bound, so its CPU-to-MPS speedup can be much smaller.
+```bash
+python -m benchmarks \
+  --model models/granite-3.1-1b \
+  --benchmark cache-decode moe-prefill end-to-end \
+  --device cpu \
+  --device mps \
+  --prompt-lengths 32 128 512 \
+  --warmups 1 \
+  --repeats 3 \
+  --decode-tokens 16
+```
+
+The runner always uses FP16. It loads each model only once, completes every CPU
+suite, and then moves the same resident engine to MPS without rereading
+Safetensors. Model load and device-transfer time are printed separately. MPS
+is included by default when available; an explicitly requested unavailable MPS
+device is an error.
+
+The suites measure:
+
+- `cache-decode`: cached single-token decode versus recomputing the complete
+  prefix, including TPOT, throughput, speedup, cache memory, and final-logit
+  agreement. Because this suite compares the two algorithms, both paths run
+  only for requested prompt lengths up to 32 tokens; longer cases are omitted.
+- `moe-prefill`: full Granite prefill over several prompt lengths. CPU uses the
+  active-expert loop and MPS uses padded expert batching automatically.
+- `end-to-end`: TTFT, synchronized prefill throughput, decode TPOT and
+  throughput, generated tokens, and cache memory through `Engine.generate`.
+
+One untimed warmup and three measured repetitions are the defaults. Tables show
+median times. Input construction, checkpoint loading, cache allocation, and
+correctness comparisons remain outside measured regions. MPS timing explicitly
+synchronizes at measurement boundaries because accelerator work is otherwise
+asynchronous.
+
+TTFT includes prompt preparation, cache setup, prefill, and first-token
+selection. Prefill is matrix-matrix-heavy and benefits strongly from MPS;
+batch-one decode is usually memory-bandwidth-bound, so its CPU-to-MPS speedup
+can be much smaller.
 
 ## Tests and demonstrations
 
@@ -317,13 +355,14 @@ Focused educational demonstrations live in `examples/`:
 
 ```bash
 python -m examples.inspect_config models/qwen3-0.6b
-python -m examples.tokenizer_demo models/qwen3-0.6b
+python -m examples.tokenizer_demo models/qwen3-0.6b "Hello"
 python -m examples.checkpoint_inspect models/qwen3-0.6b
-python -m examples.cache_demo models/qwen3-0.6b
+python -m examples.norm_demo
+python -m examples.rope_demo
+python -m examples.mlp_demo
+python -m examples.attention_demo
+python -m examples.moe_demo
 python -m examples.generation_demo models/qwen3-0.6b
-python -m examples.engine_demo models/qwen3-0.6b
-python -m examples.chat_generation_demo models/qwen3-0.6b
-python -m examples.openai_adapter_demo
 ```
 
 ## Current scope

@@ -110,30 +110,25 @@ class Engine:
     ) -> "Engine":
         """Select, load, and place one supported checkpoint for inference."""
 
-        selected_device = resolve_device(device)
-        selected_dtype = resolve_dtype(dtype, device=selected_device)
         started = time.perf_counter()
         config = load_config(model_dir)
         tokenizer = load_tokenizer(model_dir, model_config=config)
         model = load_model(model_dir, model_config=config)
         model.config.validate_context_length(max_seq_len)
         model.requires_grad_(False)
-        model.to(device=selected_device, dtype=selected_dtype)
-        # Model precision applies to learned weights and activations, but RoPE
-        # angles should still start from FP32 inverse frequencies. ``Module.to``
-        # converts every floating buffer, so reconstruct this derived buffer on
-        # the selected device after placement.
-        model.materialize_derived_buffers(selected_device)
-        synchronize_device(selected_device)
-        load_seconds = time.perf_counter() - started
-        return cls(
+        loaded_parameter = next(model.parameters())
+        engine = cls(
             model=model,
             tokenizer=tokenizer,
-            device=selected_device,
-            dtype=selected_dtype,
+            device=model.input_device,
+            dtype=loaded_parameter.dtype,
             max_seq_len=max_seq_len,
-            load_seconds=load_seconds,
+            load_seconds=0.0,
         )
+        engine.to(device=device, dtype=dtype)
+        load_seconds = time.perf_counter() - started
+        engine.load_seconds = load_seconds
+        return engine
 
     def generate(
         self,
@@ -155,6 +150,42 @@ class Engine:
             max_seq_len=self.max_seq_len,
             synchronize=self.synchronize,
         )
+
+    def to(
+        self,
+        *,
+        device: str | torch.device | None = None,
+        dtype: str | torch.dtype | None = None,
+    ) -> "Engine":
+        """Move the resident model without loading its checkpoint again.
+
+        As with ``torch.nn.Module.to``, dtype conversion changes the resident
+        weights. Widening a model after a lossy downcast does not restore the
+        checkpoint's original precision.
+        """
+
+        selected_device = (
+            self.device if device is None else resolve_device(device)
+        )
+        selected_dtype = (
+            self.dtype
+            if dtype is None
+            else resolve_dtype(dtype, device=selected_device)
+        )
+        if selected_device == self.device and selected_dtype == self.dtype:
+            return self
+
+        # CausalLMBase._apply clears the device- and dtype-specific KV cache.
+        # Module.to preserves eval mode and requires_grad flags.
+        self.model.to(device=selected_device, dtype=selected_dtype)
+        # Model precision applies to learned weights and activations, but RoPE
+        # angles should still start from FP32 inverse frequencies. Module.to
+        # converts every floating buffer, so rebuild this buffer afterward.
+        self.model.materialize_derived_buffers(selected_device)
+        synchronize_device(selected_device)
+        self.device = selected_device
+        self.dtype = selected_dtype
+        return self
 
     def synchronize(self) -> None:
         """Wait for this engine's device to finish queued work."""
