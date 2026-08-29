@@ -48,9 +48,13 @@ class TopKRouter(nn.Module):
                 f"{tuple(inputs.shape)}"
             )
 
-        # Match Granite's reference path: projection uses the model execution
-        # dtype, while expert selection and softmax operate on FP32 logits.
-        logits = self.layer(inputs).float()
+        # Routing is a discrete decision: a small FP16 kernel difference can
+        # exchange the experts immediately above and below the top-k boundary,
+        # after which CPU and MPS execute different networks. Compute the
+        # projection itself in FP32, rather than projecting in FP16 and only
+        # widening the already-rounded result. Expert projections still use the
+        # model execution dtype.
+        logits = F.linear(inputs.float(), self.layer.weight.float())
         top_logits, expert_indices = torch.topk(logits, self.top_k, dim=-1)
         expert_weights = torch.softmax(top_logits, dim=-1, dtype=torch.float32)
         return RoutingDecision(logits, expert_indices, expert_weights)

@@ -12,7 +12,7 @@ def _explicit_moe_reference(
     block: GraniteMoeBlock, inputs: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     flattened = inputs.reshape(-1, block.hidden_size)
-    logits = F.linear(flattened, block.router.layer.weight).float()
+    logits = F.linear(flattened.float(), block.router.layer.weight.float())
     top_logits, expert_indices = torch.topk(logits, block.top_k, dim=-1)
     expert_weights = torch.softmax(top_logits, dim=-1, dtype=torch.float32)
     output = torch.zeros_like(flattened)
@@ -62,14 +62,18 @@ class TopKRouterTests(unittest.TestCase):
         self.assertEqual(routing.expert_weights.dtype, torch.float32)
 
     def test_router_results_are_fp32_for_reduced_precision_inputs(self) -> None:
+        torch.manual_seed(37)
         router = TopKRouter(hidden_size=2, num_experts=3, top_k=2).to(
             dtype=torch.bfloat16
         )
+        inputs = torch.randn(2, 2, dtype=torch.bfloat16)
 
-        routing = router(torch.ones(2, 2, dtype=torch.bfloat16))
+        routing = router(inputs)
+        expected = F.linear(inputs.float(), router.layer.weight.float())
 
         self.assertEqual(routing.logits.dtype, torch.float32)
         self.assertEqual(routing.expert_weights.dtype, torch.float32)
+        torch.testing.assert_close(routing.logits, expected, rtol=0.0, atol=0.0)
 
 
 class GraniteMoeBlockTests(unittest.TestCase):

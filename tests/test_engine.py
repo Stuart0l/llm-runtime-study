@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import unittest
@@ -188,6 +189,43 @@ class MPSEngineIntegrationTests(unittest.TestCase):
     )
     def test_granite_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
         self._assert_fp16_model_runs_on_mps(GRANITE_MODEL_DIR)
+
+    @unittest.skipUnless(
+        torch.backends.mps.is_available() and GRANITE_MODEL_DIR.is_dir(),
+        "MPS or local Granite checkpoint is unavailable",
+    )
+    def test_granite_fp16_greedy_tokens_match_cpu_past_routing_boundary(
+        self,
+    ) -> None:
+        messages = [
+            ChatMessage("user", "Explain grouped-query attention briefly.")
+        ]
+
+        cpu_engine = Engine.from_model_dir(
+            GRANITE_MODEL_DIR,
+            device="cpu",
+            dtype="float16",
+            max_seq_len=256,
+        )
+        cpu_token_ids = [
+            event.token_id
+            for event in cpu_engine.generate(messages, max_new_tokens=40)
+        ]
+        del cpu_engine
+        gc.collect()
+
+        mps_engine = Engine.from_model_dir(
+            GRANITE_MODEL_DIR,
+            device="mps",
+            dtype="float16",
+            max_seq_len=256,
+        )
+        mps_token_ids = [
+            event.token_id
+            for event in mps_engine.generate(messages, max_new_tokens=40)
+        ]
+
+        self.assertEqual(mps_token_ids, cpu_token_ids)
 
 
 if __name__ == "__main__":
