@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch.nn import functional as F
@@ -122,6 +123,62 @@ class GraniteMoeBlockTests(unittest.TestCase):
         actual, routing = block(inputs)
 
         torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(routing.logits, logits)
+        self.assertTrue(torch.equal(routing.expert_indices, indices))
+        torch.testing.assert_close(routing.expert_weights, weights)
+
+    def test_single_token_batched_experts_match_explicit_reference(self) -> None:
+        torch.manual_seed(67)
+        block = GraniteMoeBlock(
+            hidden_size=4,
+            intermediate_size=3,
+            num_experts=5,
+            top_k=2,
+        )
+        inputs = torch.randn(1, 1, 4)
+        expected, logits, indices, weights = _explicit_moe_reference(block, inputs)
+
+        # Exercise the MPS-oriented helper directly on CPU so its equation is
+        # covered even when the test environment has no Apple GPU.
+        with patch.object(
+            block.input_linear,
+            "forward_expert",
+            side_effect=AssertionError("single-token path used expert loop"),
+        ):
+            flattened = inputs.reshape(-1, block.hidden_size)
+            routing = block.router(flattened)
+            actual, routing = block._forward_single_token(
+                inputs, flattened, routing
+            )
+
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(routing.logits, logits)
+        self.assertTrue(torch.equal(routing.expert_indices, indices))
+        torch.testing.assert_close(routing.expert_weights, weights)
+
+    def test_multiple_token_batched_experts_match_explicit_reference(self) -> None:
+        torch.manual_seed(71)
+        block = GraniteMoeBlock(
+            hidden_size=4,
+            intermediate_size=3,
+            num_experts=5,
+            top_k=2,
+        ).to(dtype=torch.float16)
+        inputs = torch.randn(2, 3, 4, dtype=torch.float16)
+        expected, logits, indices, weights = _explicit_moe_reference(block, inputs)
+        flattened = inputs.reshape(-1, block.hidden_size)
+        routing = block.router(flattened)
+
+        with patch.object(
+            block.input_linear,
+            "forward_expert",
+            side_effect=AssertionError("padded path used expert loop"),
+        ):
+            actual, routing = block._forward_multiple_tokens(
+                inputs, flattened, routing
+            )
+
+        torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
         torch.testing.assert_close(routing.logits, logits)
         self.assertTrue(torch.equal(routing.expert_indices, indices))
         torch.testing.assert_close(routing.expert_weights, weights)

@@ -105,6 +105,12 @@ selects FP16 on MPS and FP32 on CPU. MPS FP16 is intentional: its finer
 significand precision avoids some accumulated BF16 rounding observed in these
 models. BF16 remains available as an explicit override.
 
+Granite computes the router projection and top-k decision in FP32. Attention
+and decode experts use the selected model dtype. Padded MPS prefill keeps its
+larger gate/up batched projection in that dtype and widens only the smaller
+output projection to FP32, preventing backend-specific rounding from changing
+later expert routes without giving up most of the batched-prefill speedup.
+
 ## Python API
 
 ```python
@@ -233,6 +239,18 @@ the dense MLP with a top-8-of-32 packed SwiGLU expert block, scales embeddings
 by 12, scales attention and MoE residual branches by 0.22, ties the vocabulary
 projection to the embedding matrix, and divides final logits by 6.
 
+All 32 experts stay loaded, but each token selects only eight. MPS uses two
+batching strategies:
+
+- **Prefill:** group token activations by expert and pad each group to the size
+  of the busiest one, producing `[32, max_assignments, 1024]`. Two batched
+  matrix multiplications run the experts; saved positions map their weighted
+  outputs back to the original tokens.
+- **Decode:** one token activates only eight experts, so gather those eight
+  weight matrices and run them as two smaller batched matrix multiplications.
+
+CPU keeps the expert loop because it is faster there.
+
 ## KV cache
 
 Each layer owns preallocated key and value tensors:
@@ -289,6 +307,11 @@ The suite includes a conditional real MPS test and an optional Hugging Face
 correctness oracle for both architectures. It also sends conditional CLI and
 HTTP requests through the real local checkpoints. These tests skip cleanly
 when MPS, Transformers, or a local checkpoint is unavailable.
+
+Granite coverage includes its 218-tensor checkpoint, official prompt tokens,
+explicit router and packed-expert equations, cached versus uncached logits,
+greedy output against Transformers, and CPU/MPS FP16 greedy agreement. The MPS
+regression exercises both padded prefill and batched single-token expert paths.
 
 Focused educational demonstrations live in `examples/`:
 

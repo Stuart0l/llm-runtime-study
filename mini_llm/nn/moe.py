@@ -134,11 +134,16 @@ class GraniteMoeBlock(nn.Module):
         batch_size, sequence_length, _ = inputs.shape
         flattened = inputs.reshape(-1, self.hidden_size)
         routing = self.router(flattened)
+
+        if inputs.device.type == "mps":
+            if flattened.shape[0] > 1:
+                return self._forward_multiple_tokens(inputs, flattened, routing)
+            return self._forward_single_token(inputs, flattened, routing)
+
         combined = torch.zeros_like(flattened)
 
-        # Only experts selected by at least one token execute. Converting this
-        # short list to Python makes the dispatch easy to inspect; its device
-        # synchronization cost will be measured in the performance component.
+        # CPU keeps the readable active-expert loop: its low dispatch overhead
+        # is preferable to gathering or widening large packed weight tensors.
         active_experts = torch.unique(routing.expert_indices, sorted=True).tolist()
         for expert_index in active_experts:
             token_indices, selected_slots = torch.where(
@@ -164,3 +169,117 @@ class GraniteMoeBlock(nn.Module):
             combined.view(batch_size, sequence_length, self.hidden_size),
             routing,
         )
+
+    def _forward_single_token(
+        self,
+        inputs: torch.Tensor,
+        flattened: torch.Tensor,
+        routing: RoutingDecision,
+    ) -> tuple[torch.Tensor, RoutingDecision]:
+        """Evaluate all selected MPS decode experts through two batched matmuls.
+
+        Gathering eight packed matrices costs some memory bandwidth, but avoids
+        converting expert IDs to a Python list and launching two independent
+        matrix multiplications for every selected expert. Sorting preserves the
+        expert accumulation order used by the readable multi-token path.
+        """
+
+        expert_indices, selection_order = routing.expert_indices[0].sort()
+        expert_weights = routing.expert_weights[0, selection_order]
+
+        input_weights = self.input_linear.weight.index_select(0, expert_indices)
+        repeated_input = flattened.expand(self.top_k, -1).unsqueeze(-1)
+        gate_and_up = torch.bmm(input_weights, repeated_input).squeeze(-1)
+        gate, up = gate_and_up.chunk(2, dim=-1)
+        hidden = F.silu(gate) * up
+
+        output_weights = self.output_linear.weight.index_select(0, expert_indices)
+        expert_outputs = torch.bmm(
+            output_weights, hidden.unsqueeze(-1)
+        ).squeeze(-1)
+        combined = (
+            expert_outputs.float() * expert_weights.unsqueeze(-1)
+        ).sum(dim=0, keepdim=True)
+
+        return combined.to(inputs.dtype).view_as(inputs), routing
+
+    def _forward_multiple_tokens(
+        self,
+        inputs: torch.Tensor,
+        flattened: torch.Tensor,
+        routing: RoutingDecision,
+    ) -> tuple[torch.Tensor, RoutingDecision]:
+        """Run multiple tokens as two padded expert-major batched matmuls.
+
+        Every token creates ``top_k`` assignments in token-major order. A prefix
+        count maps each assignment to a unique ``[expert, position]`` coordinate
+        in a padded expert batch. Those same coordinates recover the results in
+        their original order, avoiding sorting, inverse permutations, and
+        scatter-add.
+        """
+
+        num_tokens = flattened.shape[0]
+        num_assignments = num_tokens * self.top_k
+
+        # Flattening preserves token-major order:
+        #   token 0's K experts, token 1's K experts, ...
+        # Keeping this order is what later makes a simple [tokens, K, hidden]
+        # reshape sufficient to reassemble each token's expert results.
+        expert_indices = routing.expert_indices.reshape(num_assignments)
+        expert_weights = routing.expert_weights.reshape(num_assignments)
+
+        # Calculate a zero-based position within each expert without sorting.
+        # For expert IDs [2, 0, 2, 0], the positions are [0, 0, 1, 1], giving
+        # unique coordinates (2, 0), (0, 0), (2, 1), and (0, 1).
+        expert_markers = F.one_hot(
+            expert_indices, num_classes=self.num_experts
+        )
+        expert_counts = expert_markers.sum(dim=0)
+        max_assignments = int(expert_counts.max().item())
+        cumulative_counts = expert_markers.cumsum(dim=0)
+        positions = (
+            cumulative_counts.gather(1, expert_indices.unsqueeze(1)).squeeze(1)
+            - 1
+        )
+
+        # Repeat each token once for every selected expert, then place each
+        # assignment at its [expert, position] coordinate. Unused cells remain
+        # zero; Granite's bias-free expert projections keep them zero.
+        assignment_inputs = (
+            flattened.unsqueeze(1)
+            .expand(num_tokens, self.top_k, self.hidden_size)
+            .reshape(num_assignments, self.hidden_size)
+        )
+        expert_inputs = torch.zeros(
+            self.num_experts,
+            max_assignments,
+            self.hidden_size,
+            dtype=inputs.dtype,
+            device=inputs.device,
+        )
+        expert_inputs[expert_indices, positions] = assignment_inputs
+
+        # The expert dimension is the batch dimension of both matrix
+        # multiplications. Keep the larger gate/up projection in the model dtype.
+        # Widen only the smaller output projection: FP16 output GEMM differences
+        # were sufficient to change later routes, while FP16 gate/up remained
+        # aligned in the CPU/MPS regression.
+        gate_and_up = torch.bmm(
+            expert_inputs,
+            self.input_linear.weight.transpose(1, 2),
+        )
+        gate, up = gate_and_up.chunk(2, dim=-1)
+        hidden = F.silu(gate) * up
+        expert_outputs = torch.bmm(
+            hidden.float(),
+            self.output_linear.weight.float().transpose(1, 2),
+        )
+
+        # Read valid results through the same coordinates used for packing.
+        # They are therefore already token-major: reshape to [tokens, K, hidden],
+        # apply the router probabilities, and sum each token's K contributions.
+        assignment_outputs = expert_outputs[expert_indices, positions]
+        combined = (
+            assignment_outputs.float() * expert_weights.unsqueeze(-1)
+        ).view(num_tokens, self.top_k, self.hidden_size).sum(dim=1)
+        return combined.to(inputs.dtype).view_as(inputs), routing
