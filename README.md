@@ -1,15 +1,21 @@
 # Mini LLM Inference Runtime
 
-This project is a small, study-oriented text-generation runtime for Qwen3
-dense checkpoints and IBM Granite 3.1 sparse-MoE checkpoints. The transformer
-execution path is implemented directly with PyTorch; it does not use
-Transformers to load or run a model. The trained tokenizer algorithms are
-reused through `tokenizers`.
+A study-oriented text-generation runtime implemented directly with PyTorch.
+It loads local Safetensors checkpoints without Transformers, runs on CPU or
+Apple MPS, and exposes both a command-line interface and a synchronous
+OpenAI-compatible Chat Completions endpoint.
 
-The runtime supports one active request with batch size one. It performs one
-prompt prefill followed by single-token decoding through a preallocated KV
-cache, can run on Apple MPS or CPU, and can expose synchronous OpenAI-compatible
-Chat Completions over HTTP.
+The runtime currently supports:
+
+| Area | Support |
+| --- | --- |
+| Architectures | Qwen3 dense and IBM Granite 3.1 sparse MoE |
+| Checkpoints | Single-file and indexed sharded Safetensors |
+| Tokenization | Local `tokenizer.json` through `tokenizers` |
+| Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
+| Execution | CPU and Apple MPS, batch size one, one active request |
+| Cache | Preallocated dense KV cache with prefill and single-token decode |
+| Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
 ## Setup
 
@@ -21,8 +27,9 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Place a supported Hugging Face model directory under `models/`. A single-file
-Qwen checkpoint contains at least:
+### Model directories
+
+Place local Hugging Face model artifacts under `models/`:
 
 ```text
 models/qwen3-0.6b/
@@ -32,9 +39,7 @@ models/qwen3-0.6b/
 └── tokenizer_config.json
 ```
 
-The Granite model uses the same four required files in a directory such as
-`models/granite-3.1-1b`. The runtime also supports standard indexed
-Safetensors checkpoints such as Qwen3-1.7B:
+Indexed checkpoints are also supported:
 
 ```text
 models/qwen3-1.7b/
@@ -46,11 +51,14 @@ models/qwen3-1.7b/
 └── tokenizer_config.json
 ```
 
-The runtime reads every shard header into one combined manifest. The registered
-architecture schema then checks all tensor names, shapes, and dtypes before
-model weights are loaded. Shard indexes are treated as trusted model files.
+The loader combines shard headers into one manifest and validates every tensor
+name, shape, and dtype against the selected architecture before assigning any
+weights. Granite uses the same required configuration, tokenizer, and
+checkpoint artifacts.
 
-## Generate text
+## Run the Runtime
+
+### One-shot generation
 
 ```bash
 python -m mini_llm \
@@ -60,13 +68,12 @@ python -m mini_llm \
   --temperature 0
 ```
 
-The prompt is raw user text. The runtime selects the model's chat template and
-tokenizer automatically. Generated text streams to the terminal, followed by a
-benchmark summary. Substitute `models/granite-3.1-1b` in the same command to
-run Granite.
+The prompt is raw user text. The runtime chooses the architecture-specific chat
+template and tokenizer, streams generated text, and then prints latency and
+cache metrics. Replace the model path with `models/granite-3.1-1b` to run
+Granite.
 
-To load the model once and enter multiple independent prompts, use interactive
-mode:
+### Interactive generation
 
 ```bash
 python -m mini_llm \
@@ -76,42 +83,28 @@ python -m mini_llm \
   --temperature 0
 ```
 
-The model weights and tokenizer remain loaded between prompts. Each prompt
-starts a fresh generation request and KV cache; the runtime does not yet carry
-conversation history from one prompt to the next. Enter `/quit` or `/exit`, or
-send EOF with Control-D, to stop. `--prompt` may be supplied with
-`--interactive` to provide the first prompt before the input loop begins.
+Interactive mode loads the model once and accepts independent prompts until
+`/quit`, `/exit`, or Control-D. Each prompt starts a fresh chat and resets the
+logical KV-cache length; conversation history is not carried between inputs.
 
-Useful options:
+### Important CLI options
 
-```text
---device auto|cpu|mps
---dtype auto|float16|bfloat16|float32
---max-seq-len 4096
---temperature 0.8
---top-k 20
---top-p 0.9
---seed 42
---thinking
---interactive
---no-stream
---no-metrics
-```
-
-`--thinking` is a Qwen3 chat-template option; Granite rejects it explicitly.
+| Option | Purpose |
+| --- | --- |
+| `--device auto\|cpu\|mps` | Choose execution device |
+| `--dtype auto\|float16\|bfloat16\|float32` | Choose model precision |
+| `--max-seq-len 4096` | Set runtime context and cache limit |
+| `--temperature`, `--top-k`, `--top-p`, `--seed` | Configure sampling |
+| `--thinking` | Enable the Qwen3 thinking prompt; Granite rejects it |
+| `--interactive` | Reuse one loaded model for multiple prompts |
+| `--no-stream`, `--no-metrics` | Control terminal output |
 
 `device=auto` selects MPS when available and otherwise CPU. `dtype=auto`
-selects FP16 on MPS and FP32 on CPU. MPS FP16 is intentional: its finer
-significand precision avoids some accumulated BF16 rounding observed in these
-models. BF16 remains available as an explicit override.
+selects FP16 on MPS and FP32 on CPU. FP16 is preferred over BF16 on MPS because
+its additional significand bits produced more stable output for the supported
+models; BF16 remains available as an explicit override.
 
-Granite computes the router projection and top-k decision in FP32. Attention
-and decode experts use the selected model dtype. Padded MPS prefill keeps its
-larger gate/up batched projection in that dtype and widens only the smaller
-output projection to FP32, preventing backend-specific rounding from changing
-later expert routes without giving up most of the batched-prefill speedup.
-
-## Python API
+### Python API
 
 ```python
 from mini_llm.engine import Engine
@@ -133,26 +126,21 @@ for event in engine.generate(
     print(event.text_delta, end="", flush=True)
 ```
 
-Move the already-loaded model without reading its checkpoint again:
+Each event contains the new stable text, complete emitted text, token index,
+optional finish reason, and synchronized model-call duration. The first event
+also contains the already-computed formatted prompt-token count.
+
+Move a resident model without rereading its checkpoint:
 
 ```python
 engine.to(device="mps", dtype="float16")
 ```
 
-Moving invalidates the device-specific KV cache and rebuilds RoPE's derived
-FP32 frequencies on the destination. Dtype conversion changes the resident
-weights: widening after a lossy downcast does not restore the checkpoint's
-original precision.
+Moving the model invalidates its device-specific KV cache and rebuilds RoPE's
+derived FP32 frequencies. Dtype conversion changes the resident weights;
+widening after a lossy downcast does not restore the original precision.
 
-Each event contains the new stable text in `text_delta`, the complete emitted
-text in `text`, the generated token index, an optional finish reason, and the
-synchronized model-call duration when generation is run through `Engine`. The
-first event also carries the formatted prompt-token count already calculated by
-the generation loop, so benchmark consumers do not tokenize the prompt twice.
-
-## HTTP server
-
-Start one local server process with:
+### HTTP server
 
 ```bash
 python -m mini_llm.server \
@@ -164,12 +152,12 @@ python -m mini_llm.server \
   --max-seq-len 4096
 ```
 
-The model and tokenizer load once before the server accepts requests. The
-served model name defaults to the model directory name (`qwen3-0.6b` here).
-Use `--served-model-name NAME` to override it. The command always starts one
-worker because all requests share the model's mutable KV cache.
+The server loads one model before accepting requests and always uses one worker
+because requests share a mutable KV cache. Concurrent valid requests wait and
+execute one at a time. The served model name defaults to the model-directory
+name and can be changed with `--served-model-name NAME`.
 
-Send a synchronous Chat Completions request:
+Send a request:
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
@@ -185,7 +173,7 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-For an existing OpenAI-compatible client or UI, configure:
+OpenAI-compatible clients can use:
 
 ```text
 base URL: http://127.0.0.1:8000/v1
@@ -193,76 +181,55 @@ model:    qwen3-0.6b
 API key:  any placeholder if the client requires one
 ```
 
-The server itself does not inspect an API key. It binds only to localhost by
-default; choosing another host can expose the unauthenticated server to the
-network. FastAPI's interactive schema is available at
-`http://127.0.0.1:8000/docs` while the server is running.
+The local server does not inspect API keys and binds to `127.0.0.1` by default;
+changing the host can expose the unauthenticated endpoint to the network.
+FastAPI documentation is available at `http://127.0.0.1:8000/docs`. This
+version supports text-only system, user, and assistant messages with one
+non-streaming completion. HTTP streaming, tool calls, media, structured output,
+penalties, stop strings, and authentication are deferred.
 
-This version supports text-only system, user, and assistant history, one
-completion, and ordinary JSON responses. HTTP streaming, tools, media,
-developer messages, penalties, stop strings, structured output, and
-authentication are not implemented. Concurrent valid requests wait in order
-and run one at a time so they never overwrite each other's KV cache.
-
-## Execution architecture
+## How Inference Works
 
 ```text
-raw user prompt
-      │
-      ▼
-architecture chat formatting → tokenizer → prompt token IDs
-      │
-      ▼
-one full-sequence prefill
-      │
-      ├── writes K/V for every prompt position into each layer cache
-      │
-      ▼
-last-position vocabulary logits → sampling → first output token
-      │
-      ▼
-single-token decode → append one K/V position → next token
-      │
-      └───────────────────────────────────────────────┐
-                                                      │
-                repeat until EOS, token limit, or context limit
+raw messages
+    → architecture-specific chat template
+    → tokenizer
+    → prompt token IDs
+    → full-sequence prefill and K/V writes
+    → sample first output token
+    → cached single-token decode and one new K/V write
+    → repeat until EOS, token limit, or context limit
 ```
 
-Qwen uses dense SwiGLU decoder layers:
+Both architectures use token embeddings, pre-normalized decoder layers,
+grouped-query causal attention, RoPE, residual connections, final RMSNorm, and
+a vocabulary projection. Their main differences are:
 
-```text
-token IDs
-  → token embeddings
-  → 28 decoder layers
-      → RMSNorm
-      → grouped-query causal attention + RoPE + Q/K normalization
-      → residual connection
-      → RMSNorm
-      → SwiGLU feed-forward network
-      → residual connection
-  → final RMSNorm
-  → language-model head
-  → vocabulary logits
-```
+| Detail | Qwen3-0.6B | Granite 3.1 1B-A400M |
+| --- | --- | --- |
+| Decoder layers | 28 | 24 |
+| Feed-forward block | Dense SwiGLU | Top-8-of-32 sparse SwiGLU experts |
+| Query/key normalization | Per-head Q/K RMSNorm | None |
+| Attention scaling | `1 / sqrt(head_dim)` | Configured `1 / head_dim` |
+| Embedding/output | Separate LM head | Tied embeddings, scaled logits |
 
-Granite uses 24 decoder layers without Q/K normalization. Each layer replaces
-the dense MLP with a top-8-of-32 packed SwiGLU expert block, scales embeddings
-by 12, scales attention and MoE residual branches by 0.22, ties the vocabulary
-projection to the embedding matrix, and divides final logits by 6.
+### Granite MoE execution
 
-All 32 experts stay loaded, but each token selects only eight. MPS uses two
-batching strategies:
+All 32 experts remain resident, while each token executes only its selected
+eight. Router projection and top-k selection run in FP32 because small reduced-
+precision differences near the top-k boundary can select a different network.
 
-- **Prefill:** group token activations by expert and pad each group to the size
-  of the busiest one, producing `[32, max_assignments, 1024]`. Two batched
-  matrix multiplications run the experts; saved positions map their weighted
-  outputs back to the original tokens.
-- **Decode:** one token activates only eight experts, so gather those eight
-  weight matrices and run them as two smaller batched matrix multiplications.
+- **CPU:** use the active-expert loop because it has lower dispatch overhead.
+- **MPS prefill:** group token activations by expert, pad groups to the busiest
+  expert, and process `[32, max_assignments, 1024]` through batched matmuls.
+- **MPS decode:** gather the eight selected expert weight matrices and process
+  the single token with two smaller batched matmuls.
 
-CPU keeps the expert loop because it is faster there.
+MPS prefill keeps the larger gate/up projection in FP16 and widens the smaller
+output projection and routing-weighted reduction to FP32. This preserves most
+of the batching speedup while reducing backend-specific route divergence.
 
-## KV cache
+### KV cache
 
 Each layer owns preallocated key and value tensors:
 
@@ -270,18 +237,17 @@ Each layer owns preallocated key and value tensors:
 [1, num_kv_heads, capacity, head_dim]
 ```
 
-For Qwen3-0.6B this is `[1, 8, capacity, 128]`; for Granite it is
-`[1, 8, capacity, 64]`. The cache stores the original grouped-query K/V heads;
-expansion to query-head count happens only inside attention computation.
-
-Cache memory is:
+Qwen3-0.6B uses `[1, 8, capacity, 128]`; Granite uses
+`[1, 8, capacity, 64]`. The cache stores the original GQA key/value heads and
+expands them to query-head count only during attention.
 
 ```text
-layers × 2(K,V) × KV heads × capacity × head dimension × bytes per value
+cache bytes = layers × 2(K,V) × KV heads × capacity × head_dim × bytes/value
 ```
 
-Resetting changes only the logical length, so the allocated tensors can be
-reused by the next request.
+Resetting changes only logical length, allowing the same allocation to serve a
+later request. Moving the engine to another device or dtype releases the old
+cache because its storage is no longer compatible.
 
 ## Benchmarks
 
@@ -291,7 +257,7 @@ Run every applicable suite with one checkpoint load:
 python -m benchmarks --model models/granite-3.1-1b
 ```
 
-Or select suites and inputs explicitly:
+Select suites and inputs explicitly:
 
 ```bash
 python -m benchmarks \
@@ -305,53 +271,41 @@ python -m benchmarks \
   --decode-tokens 16
 ```
 
-The runner always uses FP16. It loads each model only once, completes every CPU
-suite, and then moves the same resident engine to MPS without rereading
-Safetensors. Model load and device-transfer time are printed separately. MPS
-is included by default when available; an explicitly requested unavailable MPS
-device is an error.
+The runner always uses FP16. It loads each checkpoint once, runs all CPU cases,
+then moves the same engine to MPS without reloading. Load and transfer times are
+reported separately.
 
-The suites measure:
+| Suite | Measurements |
+| --- | --- |
+| `cache-decode` | Cached versus uncached TPOT, throughput, cached speedup, cache memory, and logit agreement. Both paths run only for requested prompts up to 32 tokens. |
+| `moe-prefill` | Full Granite prefill latency and throughput using the device's automatic expert method. |
+| `end-to-end` | TTFT, prefill throughput, decode TPOT/throughput, output tokens, and cache memory through `Engine.generate`. |
 
-- `cache-decode`: cached single-token decode versus recomputing the complete
-  prefix, including TPOT, throughput, speedup, cache memory, and final-logit
-  agreement. Because this suite compares the two algorithms, both paths run
-  only for requested prompt lengths up to 32 tokens; longer cases are omitted.
-- `moe-prefill`: full Granite prefill over several prompt lengths. CPU uses the
-  active-expert loop and MPS uses padded expert batching automatically.
-- `end-to-end`: TTFT, synchronized prefill throughput, decode TPOT and
-  throughput, generated tokens, and cache memory through `Engine.generate`.
-
-One untimed warmup and three measured repetitions are the defaults. Tables show
-median times. Input construction, checkpoint loading, cache allocation, and
-correctness comparisons remain outside measured regions. MPS timing explicitly
-synchronizes at measurement boundaries because accelerator work is otherwise
-asynchronous.
+Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
+runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy
+kernels, allocator storage, and reusable caches. MPS is synchronized at timing
+boundaries because accelerator work is asynchronous.
 
 TTFT includes prompt preparation, cache setup, prefill, and first-token
-selection. Prefill is matrix-matrix-heavy and benefits strongly from MPS;
-batch-one decode is usually memory-bandwidth-bound, so its CPU-to-MPS speedup
-can be much smaller.
+selection. Prefill is matrix-matrix-heavy and usually benefits strongly from
+MPS. Batch-one decode is commonly memory-bandwidth-bound, so its device speedup
+can be smaller.
 
-## Tests and demonstrations
+## Development
 
-Run the complete suite:
+Run the test suite:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The suite includes a conditional real MPS test and an optional Hugging Face
-correctness oracle for both architectures. It also sends conditional CLI and
-HTTP requests through the real local checkpoints. These tests skip cleanly
-when MPS, Transformers, or a local checkpoint is unavailable.
+Tests cover configuration and checkpoint validation, tokenizer/chat-template
+agreement, explicit transformer equations, cached execution, sampling,
+generation, CLI and HTTP behavior, benchmark orchestration, optional
+Transformers references, and conditional real MPS execution. Optional tests
+skip cleanly when their model, dependency, or device is unavailable.
 
-Granite coverage includes its 218-tensor checkpoint, official prompt tokens,
-explicit router and packed-expert equations, cached versus uncached logits,
-greedy output against Transformers, and CPU/MPS FP16 greedy agreement. The MPS
-regression exercises both padded prefill and batched single-token expert paths.
-
-Focused educational demonstrations live in `examples/`:
+Focused learning examples:
 
 ```bash
 python -m examples.inspect_config models/qwen3-0.6b
@@ -365,24 +319,11 @@ python -m examples.moe_demo
 python -m examples.generation_demo models/qwen3-0.6b
 ```
 
-## Current scope
+## Current Limitations
 
-Implemented:
-
-- Qwen3 dense and Granite 3.1 sparse-MoE architectures.
-- Single request and batch size one.
-- Single-file and indexed sharded Safetensors loading without Transformers.
-- RMSNorm, optional Q/K normalization, RoPE, SwiGLU, grouped-query attention,
-  and top-k packed-expert routing.
-- Dense preallocated KV cache.
-- Greedy, temperature, top-k, and top-p sampling.
-- Seeded generation, streaming text, CPU execution, and Apple MPS execution.
-- Synchronous OpenAI-compatible Chat Completions over FastAPI.
-
-Deferred:
-
-- HTTP streaming and concurrent batching.
-- Paged attention.
-- Quantization.
-- Sliding-window cache eviction.
-- Additional model architectures.
+- One active request and batch size one.
+- Synchronous, non-streaming HTTP responses.
+- Dense KV cache rather than paged attention.
+- No quantization or sliding-window eviction.
+- No concurrent batching.
+- Only Qwen3 and Granite 3.1 MoE architectures.
