@@ -8,7 +8,9 @@ import unittest
 
 import torch
 
-from mini_llm.cli import main
+from tests.reference_support import has_local_checkpoint
+
+from mini_llm.cli import build_parser, main
 from mini_llm.generation import GenerationEvent
 from mini_llm.tokenizer import ChatMessage
 
@@ -18,6 +20,13 @@ GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class CLITests(unittest.TestCase):
+    def test_parser_accepts_cuda_device(self) -> None:
+        args = build_parser().parse_args(
+            ["--model", "model", "--prompt", "hello", "--device", "cuda"]
+        )
+
+        self.assertEqual(args.device, "cuda")
+
     @patch("mini_llm.cli.Engine.from_model_dir")
     def test_interactive_mode_loads_once_and_generates_for_each_prompt(
         self, from_model_dir: MagicMock
@@ -273,13 +282,13 @@ class CLIIntegrationTests(unittest.TestCase):
         self.assertIn("device:              cpu", output.getvalue())
 
     @unittest.skipUnless(
-        QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+        has_local_checkpoint(QWEN_MODEL_DIR), "local Qwen3 checkpoint is unavailable"
     )
     def test_real_qwen_cpu_checkpoint_generates_text_and_metrics(self) -> None:
         self._assert_real_cpu_checkpoint_generates(QWEN_MODEL_DIR)
 
     @unittest.skipUnless(
-        GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+        has_local_checkpoint(GRANITE_MODEL_DIR), "local Granite checkpoint is unavailable"
     )
     def test_real_granite_cpu_checkpoint_generates_text_and_metrics(self) -> None:
         self._assert_real_cpu_checkpoint_generates(GRANITE_MODEL_DIR)

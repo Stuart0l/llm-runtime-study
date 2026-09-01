@@ -13,6 +13,8 @@ from unittest.mock import ANY, MagicMock, patch
 import httpx
 import torch
 
+from tests.reference_support import has_local_checkpoint
+
 from mini_llm.engine import Engine, EngineError
 from mini_llm.generation import FinishReason, GenerationError, GenerationEvent
 from mini_llm.sampling import SamplingConfig
@@ -267,6 +269,11 @@ class ApplicationConstructionTests(unittest.TestCase):
 
 
 class ServerCommandTests(unittest.TestCase):
+    def test_parser_accepts_cuda_device(self) -> None:
+        args = build_parser().parse_args(["--model", "model", "--device", "cuda"])
+
+        self.assertEqual(args.device, "cuda")
+
     @patch("mini_llm.server.uvicorn.run")
     @patch("mini_llm.server.Engine.from_model_dir")
     def test_loads_engine_once_before_starting_one_worker(
@@ -397,13 +404,13 @@ class RealCheckpointHTTPIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     @unittest.skipUnless(
-        QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+        has_local_checkpoint(QWEN_MODEL_DIR), "local Qwen3 checkpoint is unavailable"
     )
     async def test_real_qwen_cpu_checkpoint_serves_chat_completion(self) -> None:
         await self._assert_real_cpu_checkpoint_serves(QWEN_MODEL_DIR)
 
     @unittest.skipUnless(
-        GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+        has_local_checkpoint(GRANITE_MODEL_DIR), "local Granite checkpoint is unavailable"
     )
     async def test_real_granite_cpu_checkpoint_serves_chat_completion(self) -> None:
         await self._assert_real_cpu_checkpoint_serves(GRANITE_MODEL_DIR)

@@ -183,6 +183,36 @@ class GraniteMoeBlockTests(unittest.TestCase):
         self.assertTrue(torch.equal(routing.expert_indices, indices))
         torch.testing.assert_close(routing.expert_weights, weights)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is unavailable")
+    def test_cuda_dispatch_uses_batched_expert_paths(self) -> None:
+        torch.manual_seed(79)
+        block = GraniteMoeBlock(
+            hidden_size=4,
+            intermediate_size=3,
+            num_experts=5,
+            top_k=2,
+        ).to(device="cuda", dtype=torch.float16)
+
+        for sequence_length in (1, 3):
+            with self.subTest(sequence_length=sequence_length):
+                inputs = torch.randn(
+                    1, sequence_length, 4, device="cuda", dtype=torch.float16
+                )
+                expected, logits, indices, weights = _explicit_moe_reference(
+                    block, inputs
+                )
+                with patch.object(
+                    block.input_linear,
+                    "forward_expert",
+                    side_effect=AssertionError("CUDA used the CPU expert loop"),
+                ):
+                    actual, routing = block(inputs)
+
+                torch.testing.assert_close(actual, expected, rtol=3e-3, atol=3e-3)
+                torch.testing.assert_close(routing.logits, logits)
+                self.assertTrue(torch.equal(routing.expert_indices, indices))
+                torch.testing.assert_close(routing.expert_weights, weights)
+
     def test_inactive_expert_weights_do_not_affect_output(self) -> None:
         block = GraniteMoeBlock(
             hidden_size=1,

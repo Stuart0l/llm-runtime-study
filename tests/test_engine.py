@@ -7,8 +7,16 @@ import unittest
 
 import torch
 
+from tests.reference_support import has_local_checkpoint
+
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
-from mini_llm.engine import Engine, EngineError, resolve_device, resolve_dtype
+from mini_llm.engine import (
+    Engine,
+    EngineError,
+    resolve_device,
+    resolve_dtype,
+    synchronize_device,
+)
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage
 
@@ -18,12 +26,25 @@ GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class DeviceAndDtypeTests(unittest.TestCase):
-    def test_auto_prefers_mps_when_available(self) -> None:
-        with patch("torch.backends.mps.is_available", return_value=True):
+    def test_auto_prefers_cuda_over_mps(self) -> None:
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.backends.mps.is_available", return_value=True),
+        ):
+            self.assertEqual(resolve_device("auto"), torch.device("cuda"))
+
+    def test_auto_prefers_mps_when_cuda_is_unavailable(self) -> None:
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.backends.mps.is_available", return_value=True),
+        ):
             self.assertEqual(resolve_device("auto"), torch.device("mps"))
 
     def test_auto_falls_back_to_cpu(self) -> None:
-        with patch("torch.backends.mps.is_available", return_value=False):
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.backends.mps.is_available", return_value=False),
+        ):
             self.assertEqual(resolve_device("auto"), torch.device("cpu"))
 
     def test_explicit_unavailable_mps_has_clear_error(self) -> None:
@@ -33,11 +54,30 @@ class DeviceAndDtypeTests(unittest.TestCase):
         ):
             resolve_device("mps")
 
-    def test_rejects_device_outside_v1_scope(self) -> None:
-        with self.assertRaisesRegex(EngineError, "supports cpu and mps"):
+    def test_explicit_unavailable_cuda_has_clear_error(self) -> None:
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            self.assertRaisesRegex(EngineError, "CUDA.*unavailable"),
+        ):
             resolve_device("cuda")
 
-    def test_auto_dtype_is_fp16_on_mps_and_fp32_on_cpu(self) -> None:
+    def test_cuda_device_index_is_validated(self) -> None:
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=1),
+        ):
+            self.assertEqual(resolve_device("cuda:0"), torch.device("cuda:0"))
+            with self.assertRaisesRegex(EngineError, "index 1.*unavailable"):
+                resolve_device("cuda:1")
+
+    def test_rejects_unsupported_device_type(self) -> None:
+        with self.assertRaisesRegex(EngineError, "supports cpu, mps, and cuda"):
+            resolve_device("xpu")
+
+    def test_auto_dtype_is_fp16_on_accelerators_and_fp32_on_cpu(self) -> None:
+        self.assertEqual(
+            resolve_dtype("auto", device=torch.device("cuda")), torch.float16
+        )
         self.assertEqual(
             resolve_dtype("auto", device=torch.device("mps")), torch.float16
         )
@@ -52,6 +92,12 @@ class DeviceAndDtypeTests(unittest.TestCase):
         self.assertEqual(
             resolve_dtype(torch.float16, device=torch.device("cpu")), torch.float16
         )
+
+    def test_cuda_synchronization_targets_selected_device(self) -> None:
+        with patch("torch.cuda.synchronize") as synchronize:
+            synchronize_device(torch.device("cuda:0"))
+
+        synchronize.assert_called_once_with(torch.device("cuda:0"))
 
 
 class EngineTests(unittest.TestCase):
@@ -275,21 +321,21 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         self.assertEqual(engine.model.cache.device.type, "mps")
 
     @unittest.skipUnless(
-        torch.backends.mps.is_available() and QWEN_MODEL_DIR.is_dir(),
+        torch.backends.mps.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
         "MPS or local Qwen3 checkpoint is unavailable",
     )
     def test_qwen_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
         self._assert_fp16_model_runs_on_mps(QWEN_MODEL_DIR)
 
     @unittest.skipUnless(
-        torch.backends.mps.is_available() and GRANITE_MODEL_DIR.is_dir(),
+        torch.backends.mps.is_available() and has_local_checkpoint(GRANITE_MODEL_DIR),
         "MPS or local Granite checkpoint is unavailable",
     )
     def test_granite_fp16_model_inputs_rope_and_cache_run_on_mps(self) -> None:
         self._assert_fp16_model_runs_on_mps(GRANITE_MODEL_DIR)
 
     @unittest.skipUnless(
-        torch.backends.mps.is_available() and GRANITE_MODEL_DIR.is_dir(),
+        torch.backends.mps.is_available() and has_local_checkpoint(GRANITE_MODEL_DIR),
         "MPS or local Granite checkpoint is unavailable",
     )
     def test_granite_fp16_greedy_tokens_match_cpu_past_routing_boundary(
@@ -326,7 +372,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         self.assertEqual(mps_token_ids, cpu_token_ids)
 
     @unittest.skipUnless(
-        torch.backends.mps.is_available() and QWEN_MODEL_DIR.is_dir(),
+        torch.backends.mps.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
         "MPS or local Qwen3 checkpoint is unavailable",
     )
     def test_loaded_cpu_engine_moves_to_mps_without_reloading(self) -> None:
@@ -343,6 +389,71 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         self.assertEqual(engine.device, torch.device("mps"))
         self.assertEqual(engine.dtype, torch.float16)
         self.assertEqual(engine.model.input_device.type, "mps")
+        self.assertEqual(
+            engine.model.model.rotary_emb.inverse_frequencies.dtype,
+            torch.float32,
+        )
+        events = list(
+            engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1)
+        )
+        self.assertTrue(events)
+
+
+class CUDAEngineIntegrationTests(unittest.TestCase):
+    def _assert_fp16_model_runs_on_cuda(self, model_dir: Path) -> None:
+        engine = Engine.from_model_dir(
+            model_dir, device="cuda", dtype="auto", max_seq_len=128
+        )
+
+        events = list(
+            engine.generate([ChatMessage("user", "Say hello.")], max_new_tokens=2)
+        )
+
+        self.assertEqual(engine.device, torch.device("cuda"))
+        self.assertEqual(engine.dtype, torch.float16)
+        self.assertTrue(events)
+        self.assertEqual(engine.model.model.embed_tokens.weight.device.type, "cuda")
+        self.assertEqual(
+            engine.model.model.rotary_emb.inverse_frequencies.device.type, "cuda"
+        )
+        self.assertEqual(
+            engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
+        )
+        self.assertIsNotNone(engine.model.cache)
+        self.assertEqual(engine.model.cache.device.type, "cuda")
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
+        "CUDA or local Qwen3 checkpoint is unavailable",
+    )
+    def test_qwen_fp16_model_inputs_rope_and_cache_run_on_cuda(self) -> None:
+        self._assert_fp16_model_runs_on_cuda(QWEN_MODEL_DIR)
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and has_local_checkpoint(GRANITE_MODEL_DIR),
+        "CUDA or local Granite checkpoint is unavailable",
+    )
+    def test_granite_fp16_model_inputs_rope_and_cache_run_on_cuda(self) -> None:
+        self._assert_fp16_model_runs_on_cuda(GRANITE_MODEL_DIR)
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
+        "CUDA or local Qwen3 checkpoint is unavailable",
+    )
+    def test_loaded_cpu_engine_moves_to_cuda_without_reloading(self) -> None:
+        engine = Engine.from_model_dir(
+            QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
+        )
+        list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
+        self.assertIsNotNone(engine.model.cache)
+
+        result = engine.to(device="cuda")
+
+        self.assertIs(result, engine)
+        self.assertIsNone(engine.model.cache)
+        self.assertEqual(engine.device, torch.device("cuda"))
+        self.assertEqual(engine.dtype, torch.float16)
+        self.assertEqual(engine.model.input_device.type, "cuda")
         self.assertEqual(
             engine.model.model.rotary_emb.inverse_frequencies.dtype,
             torch.float32,

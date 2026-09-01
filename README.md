@@ -1,9 +1,9 @@
 # Mini LLM Inference Runtime
 
 A study-oriented text-generation runtime implemented directly with PyTorch.
-It loads local Safetensors checkpoints without Transformers, runs on CPU or
-Apple MPS, and exposes both a command-line interface and a synchronous
-OpenAI-compatible Chat Completions endpoint.
+It loads local Safetensors checkpoints without Transformers, runs on CPU,
+NVIDIA CUDA, or Apple MPS, and exposes both a command-line interface and a
+synchronous OpenAI-compatible Chat Completions endpoint.
 
 The runtime currently supports:
 
@@ -13,7 +13,7 @@ The runtime currently supports:
 | Checkpoints | Single-file and indexed sharded Safetensors |
 | Tokenization | Local `tokenizer.json` through `tokenizers` |
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
-| Execution | CPU and Apple MPS, batch size one, one active request |
+| Execution | CPU, NVIDIA CUDA, and Apple MPS; batch size one; one active request |
 | Cache | Preallocated dense KV cache with prefill and single-token decode |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
@@ -25,6 +25,13 @@ Python 3.11 or newer is required.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+```
+
+For NVIDIA execution, install a CUDA-enabled PyTorch build and verify it can
+see the GPU before loading a checkpoint:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
 ### Model directories
@@ -91,7 +98,7 @@ logical KV-cache length; conversation history is not carried between inputs.
 
 | Option | Purpose |
 | --- | --- |
-| `--device auto\|cpu\|mps` | Choose execution device |
+| `--device auto\|cpu\|mps\|cuda` | Choose execution device |
 | `--dtype auto\|float16\|bfloat16\|float32` | Choose model precision |
 | `--max-seq-len 4096` | Set runtime context and cache limit |
 | `--temperature`, `--top-k`, `--top-p`, `--seed` | Configure sampling |
@@ -99,10 +106,11 @@ logical KV-cache length; conversation history is not carried between inputs.
 | `--interactive` | Reuse one loaded model for multiple prompts |
 | `--no-stream`, `--no-metrics` | Control terminal output |
 
-`device=auto` selects MPS when available and otherwise CPU. `dtype=auto`
-selects FP16 on MPS and FP32 on CPU. FP16 is preferred over BF16 on MPS because
-its additional significand bits produced more stable output for the supported
-models; BF16 remains available as an explicit override.
+`device=auto` selects CUDA when available, then MPS, and otherwise CPU.
+`dtype=auto` selects FP16 on CUDA and MPS and FP32 on CPU. FP16 reduces
+accelerator memory use, uses CUDA Tensor Cores, and provides more significand
+bits than BF16. BF16 and FP32 remain available as explicit overrides, subject
+to hardware support and VRAM capacity.
 
 ### Python API
 
@@ -133,10 +141,11 @@ also contains the already-computed formatted prompt-token count.
 Move a resident model without rereading its checkpoint:
 
 ```python
-engine.to(device="mps", dtype="float16")
+engine.to(device="cuda", dtype="float16")
 ```
 
-Moving the model invalidates its device-specific KV cache and rebuilds RoPE's
+The Python API also accepts indexed CUDA devices such as `cuda:0`. Moving the
+model invalidates its device-specific KV cache and rebuilds RoPE's
 derived FP32 frequencies. Dtype conversion changes the resident weights;
 widening after a lossy downcast does not restore the original precision.
 
@@ -220,14 +229,15 @@ eight. Router projection and top-k selection run in FP32 because small reduced-
 precision differences near the top-k boundary can select a different network.
 
 - **CPU:** use the active-expert loop because it has lower dispatch overhead.
-- **MPS prefill:** group token activations by expert, pad groups to the busiest
-  expert, and process `[32, max_assignments, 1024]` through batched matmuls.
-- **MPS decode:** gather the eight selected expert weight matrices and process
-  the single token with two smaller batched matmuls.
+- **CUDA/MPS prefill:** group token activations by expert, pad groups to the
+  busiest expert, and process `[32, max_assignments, 1024]` through batched
+  matmuls.
+- **CUDA/MPS decode:** gather the eight selected expert weight matrices and
+  process the single token with two smaller batched matmuls.
 
-MPS prefill keeps the larger gate/up projection in FP16 and widens the smaller
-output projection and routing-weighted reduction to FP32. This preserves most
-of the batching speedup while reducing backend-specific route divergence.
+Accelerator prefill keeps the larger gate/up projection in FP16 and widens the
+smaller output projection and routing-weighted reduction to FP32. This preserves
+most of the batching speedup while reducing backend-specific route divergence.
 
 ### KV cache
 
@@ -264,16 +274,17 @@ python -m benchmarks \
   --model models/granite-3.1-1b \
   --benchmark cache-decode moe-prefill end-to-end \
   --device cpu \
-  --device mps \
+  --device cuda \
   --prompt-lengths 32 128 512 \
   --warmups 1 \
   --repeats 3 \
   --decode-tokens 16
 ```
 
-The runner always uses FP16. It loads each checkpoint once, runs all CPU cases,
-then moves the same engine to MPS without reloading. Load and transfer times are
-reported separately.
+The runner always uses FP16. It loads each checkpoint once, runs every selected
+device, and moves the same engine without reloading. Available MPS and CUDA
+devices are included by default; unavailable explicitly requested devices are
+reported as errors. Load and transfer times are reported separately.
 
 | Suite | Measurements |
 | --- | --- |
@@ -283,13 +294,13 @@ reported separately.
 
 Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
 runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy
-kernels, allocator storage, and reusable caches. MPS is synchronized at timing
-boundaries because accelerator work is asynchronous.
+kernels, allocator storage, and reusable caches. CUDA and MPS are synchronized
+at timing boundaries because accelerator work is asynchronous.
 
 TTFT includes prompt preparation, cache setup, prefill, and first-token
 selection. Prefill is matrix-matrix-heavy and usually benefits strongly from
-MPS. Batch-one decode is commonly memory-bandwidth-bound, so its device speedup
-can be smaller.
+GPU execution. Batch-one decode is commonly memory-bandwidth-bound, so its
+device speedup can be smaller.
 
 ## Development
 
@@ -302,8 +313,8 @@ python -m unittest discover -s tests -v
 Tests cover configuration and checkpoint validation, tokenizer/chat-template
 agreement, explicit transformer equations, cached execution, sampling,
 generation, CLI and HTTP behavior, benchmark orchestration, optional
-Transformers references, and conditional real MPS execution. Optional tests
-skip cleanly when their model, dependency, or device is unavailable.
+Transformers references, and conditional real CUDA and MPS execution. Optional
+tests skip cleanly when their model, dependency, or device is unavailable.
 
 Focused learning examples:
 

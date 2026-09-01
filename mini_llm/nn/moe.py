@@ -135,7 +135,7 @@ class GraniteMoeBlock(nn.Module):
         flattened = inputs.reshape(-1, self.hidden_size)
         routing = self.router(flattened)
 
-        if inputs.device.type == "mps":
+        if inputs.device.type in ("mps", "cuda"):
             if flattened.shape[0] > 1:
                 return self._forward_multiple_tokens(inputs, flattened, routing)
             return self._forward_single_token(inputs, flattened, routing)
@@ -176,7 +176,7 @@ class GraniteMoeBlock(nn.Module):
         flattened: torch.Tensor,
         routing: RoutingDecision,
     ) -> tuple[torch.Tensor, RoutingDecision]:
-        """Evaluate all selected MPS decode experts through two batched matmuls.
+        """Evaluate selected accelerator decode experts with batched matmuls.
 
         Gathering eight packed matrices costs some memory bandwidth, but avoids
         converting expert IDs to a Python list and launching two independent
@@ -209,7 +209,7 @@ class GraniteMoeBlock(nn.Module):
         flattened: torch.Tensor,
         routing: RoutingDecision,
     ) -> tuple[torch.Tensor, RoutingDecision]:
-        """Run multiple tokens as two padded expert-major batched matmuls.
+        """Run accelerator prefill as two padded expert-major batched matmuls.
 
         Every token creates ``top_k`` assignments in token-major order. A prefix
         count maps each assignment to a unique ``[expert, position]`` coordinate

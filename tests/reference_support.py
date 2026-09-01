@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 from dataclasses import dataclass
 import importlib.util
+import json
 from pathlib import Path
 
 import torch
@@ -13,6 +14,25 @@ from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 
 
 HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None
+
+
+def has_local_checkpoint(model_dir: Path) -> bool:
+    """Return whether a local directory contains a complete checkpoint file set."""
+
+    if (model_dir / "model.safetensors").is_file():
+        return True
+    index_path = model_dir / "model.safetensors.index.json"
+    if not index_path.is_file():
+        return False
+    try:
+        weight_map = json.loads(index_path.read_text(encoding="utf-8"))["weight_map"]
+        shard_names = set(weight_map.values())
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
+        return False
+    return bool(shard_names) and all(
+        isinstance(name, str) and (model_dir / name).is_file()
+        for name in shard_names
+    )
 
 
 @dataclass(frozen=True, slots=True)

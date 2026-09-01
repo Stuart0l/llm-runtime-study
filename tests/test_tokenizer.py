@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 import unittest
@@ -248,6 +249,10 @@ class GraniteTokenizerIntegrationTests(unittest.TestCase):
         reference_ids = reference.apply_chat_template(
             reference_messages, tokenize=True, add_generation_prompt=True
         )
+        # Transformers 4 returns the token list directly, while Transformers 5
+        # returns a dict-shaped BatchEncoding for the same request.
+        if isinstance(reference_ids, Mapping):
+            reference_ids = reference_ids["input_ids"]
 
         self.assertEqual(our_prompt, reference_prompt)
         self.assertEqual(self.tokenizer.encode(our_prompt), reference_ids)

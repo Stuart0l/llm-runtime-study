@@ -8,6 +8,8 @@ import unittest
 from safetensors.torch import save_file
 import torch
 
+from tests.reference_support import has_local_checkpoint
+
 from mini_llm.checkpoint import (
     CheckpointError,
     CheckpointValidationError,
@@ -380,7 +382,7 @@ class ShardedCheckpointTests(unittest.TestCase):
                 SafeTensorCheckpoint.from_model_dir(model_dir)
 
 @unittest.skipUnless(
-    QWEN_MODEL_DIR.is_dir(), "local Qwen3 checkpoint is unavailable"
+    has_local_checkpoint(QWEN_MODEL_DIR), "local Qwen3 checkpoint is unavailable"
 )
 class LocalCheckpointIntegrationTests(unittest.TestCase):
     @classmethod
@@ -412,7 +414,7 @@ class LocalCheckpointIntegrationTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    GRANITE_MODEL_DIR.is_dir(), "local Granite checkpoint is unavailable"
+    has_local_checkpoint(GRANITE_MODEL_DIR), "local Granite checkpoint is unavailable"
 )
 class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
     @classmethod

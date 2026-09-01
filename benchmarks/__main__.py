@@ -55,8 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device",
         action="append",
-        choices=("cpu", "mps"),
-        help="device; repeat to select both (default: every available device)",
+        choices=("cpu", "mps", "cuda"),
+        help="device; repeat to select several (default: every available device)",
     )
     parser.add_argument(
         "--prompt-lengths",
@@ -75,13 +75,17 @@ def _selected_devices(requested: Sequence[str] | None) -> list[str]:
         devices = ["cpu"]
         if torch.backends.mps.is_available():
             devices.append("mps")
+        if torch.cuda.is_available():
+            devices.append("cuda")
         return devices
 
     selected = set(requested)
     if "mps" in selected and not torch.backends.mps.is_available():
         raise BenchmarkError("MPS was requested but is unavailable")
-    # CPU first allows one loaded model to move in a single direction.
-    return [device for device in ("cpu", "mps") if device in selected]
+    if "cuda" in selected and not torch.cuda.is_available():
+        raise BenchmarkError("CUDA was requested but is unavailable")
+    # CPU first avoids moving a downcast resident model back from an accelerator.
+    return [device for device in ("cpu", "mps", "cuda") if device in selected]
 
 
 def _validate_cases(
@@ -200,6 +204,8 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
         gc.collect()
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def main(

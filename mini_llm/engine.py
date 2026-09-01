@@ -29,23 +29,38 @@ _DTYPES = {
 
 
 def resolve_device(requested: str | torch.device = "auto") -> torch.device:
-    """Resolve ``auto`` to MPS when available, otherwise CPU."""
+    """Resolve and validate one supported PyTorch execution device."""
 
     if requested == "auto":
-        return torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
     try:
         device = torch.device(requested)
     except (TypeError, RuntimeError) as exc:
         raise EngineError(f"invalid device {requested!r}") from exc
-    if device.type not in ("cpu", "mps"):
+    if device.type not in ("cpu", "mps", "cuda"):
         raise EngineError(
-            f"unsupported device {device}; this runtime supports cpu and mps"
+            f"unsupported device {device}; this runtime supports cpu, mps, and cuda"
         )
     if device.type == "mps" and not torch.backends.mps.is_available():
         raise EngineError(
             "MPS was requested but is unavailable; use device='cpu' or check "
             "this PyTorch build and macOS environment"
         )
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise EngineError(
+                "CUDA was requested but is unavailable; use device='cpu' or check "
+                "the NVIDIA driver and CUDA-enabled PyTorch installation"
+            )
+        if device.index is not None and device.index >= torch.cuda.device_count():
+            raise EngineError(
+                f"CUDA device index {device.index} is unavailable; found "
+                f"{torch.cuda.device_count()} CUDA device(s)"
+            )
     return device
 
 
@@ -54,18 +69,15 @@ def resolve_dtype(
     *,
     device: torch.device,
 ) -> torch.dtype:
-    """Resolve automatic precision: FP16 on MPS and FP32 on CPU."""
+    """Resolve automatic precision: FP16 on accelerators and FP32 on CPU."""
 
     if requested == "auto":
-        # Prefer FP16 rather than BF16 on MPS intentionally. BF16 spends more
-        # bits on exponent range but has only 7 significand bits versus FP16's
-        # 10. The supported models' normalized inference activations usually
-        # do not need the extra range, while coarser BF16 rounding can
-        # accumulate through attention, residuals, and feed-forward blocks and
-        # eventually change greedy tokens.
-        # MPS attention kernels may also differ numerically from CPU kernels.
-        # Keep BF16 available as an explicit override, but not the default.
-        return torch.float16 if device.type == "mps" else torch.float32
+        # FP16 reduces accelerator weight/cache memory and uses CUDA Tensor
+        # Cores. It is also intentional on MPS: BF16 has only 7 significand
+        # bits versus FP16's 10, and its coarser rounding can accumulate through
+        # attention, residuals, and feed-forward blocks. Keep BF16 available as
+        # an explicit override, but not the default.
+        return torch.float16 if device.type in ("mps", "cuda") else torch.float32
     if isinstance(requested, torch.dtype):
         dtype = requested
     elif isinstance(requested, str) and requested in _DTYPES:
@@ -86,6 +98,8 @@ def synchronize_device(device: torch.device) -> None:
 
     if device.type == "mps":
         torch.mps.synchronize()
+    elif device.type == "cuda":
+        torch.cuda.synchronize(device)
 
 
 @dataclass(slots=True)

@@ -135,7 +135,10 @@ class RunnerTests(unittest.TestCase):
         calls.attach_mock(end_to_end_run, "end_to_end")
         calls.attach_mock(engine.to, "move")
 
-        with patch("torch.backends.mps.is_available", return_value=True):
+        with (
+            patch("torch.backends.mps.is_available", return_value=True),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
             run(self._args(), output=StringIO())
 
         from_model_dir.assert_called_once_with(
@@ -165,8 +168,18 @@ class RunnerTests(unittest.TestCase):
             self.assertIs(suite.call_args_list[1].args[0], engine)
 
     def test_default_devices_include_available_mps(self) -> None:
-        with patch("torch.backends.mps.is_available", return_value=True):
+        with (
+            patch("torch.backends.mps.is_available", return_value=True),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
             self.assertEqual(_selected_devices(None), ["cpu", "mps"])
+
+    def test_default_devices_include_available_cuda(self) -> None:
+        with (
+            patch("torch.backends.mps.is_available", return_value=False),
+            patch("torch.cuda.is_available", return_value=True),
+        ):
+            self.assertEqual(_selected_devices(None), ["cpu", "cuda"])
 
     def test_explicit_unavailable_mps_fails(self) -> None:
         with (
@@ -174,6 +187,13 @@ class RunnerTests(unittest.TestCase):
             self.assertRaisesRegex(BenchmarkError, "unavailable"),
         ):
             _selected_devices(["mps"])
+
+    def test_explicit_unavailable_cuda_fails(self) -> None:
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            self.assertRaisesRegex(BenchmarkError, "unavailable"),
+        ):
+            _selected_devices(["cuda"])
 
     @patch("benchmarks.__main__.build_prompt_case")
     @patch("benchmarks.__main__.Engine.from_model_dir")

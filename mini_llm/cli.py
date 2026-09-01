@@ -50,7 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k", type=int)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--device", choices=("auto", "cpu", "mps"), default="auto")
+    parser.add_argument(
+        "--device", choices=("auto", "cpu", "mps", "cuda"), default="auto"
+    )
     parser.add_argument(
         "--dtype",
         choices=("auto", "float16", "bfloat16", "float32"),

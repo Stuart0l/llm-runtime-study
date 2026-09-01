@@ -171,7 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=_port_number, default=8000)
     parser.add_argument("--served-model-name")
     parser.add_argument("--max-seq-len", type=int, default=4096)
-    parser.add_argument("--device", choices=("auto", "cpu", "mps"), default="auto")
+    parser.add_argument(
+        "--device", choices=("auto", "cpu", "mps", "cuda"), default="auto"
+    )
     parser.add_argument(
         "--dtype",
         choices=("auto", "float16", "bfloat16", "float32"),
