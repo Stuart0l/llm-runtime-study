@@ -5,7 +5,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from mini_llm.config import ConfigError, GraniteMoeConfig, Qwen3Config, load_config
+from mini_llm.config import (
+    ConfigError,
+    GPTQQuantizationConfig,
+    GraniteMoeConfig,
+    Qwen3Config,
+    load_config,
+)
 from examples.inspect_config import render_summary
 
 
@@ -63,7 +69,60 @@ def valid_granite_config() -> dict[str, object]:
     }
 
 
+def valid_gptq_config() -> dict[str, object]:
+    return {
+        "bits": 8,
+        "checkpoint_format": "gptq",
+        "desc_act": False,
+        "group_size": 128,
+        "lm_head": False,
+        "pack_dtype": "int32",
+        "quant_method": "gptq",
+        "sym": True,
+    }
+
+
 class Qwen3ConfigTests(unittest.TestCase):
+    def test_parses_supported_gptq_metadata(self) -> None:
+        raw = valid_config()
+        raw["quantization_config"] = valid_gptq_config()
+
+        config = Qwen3Config.from_dict(raw)
+
+        self.assertIsInstance(
+            config.quantization_config, GPTQQuantizationConfig
+        )
+        assert config.quantization_config is not None
+        self.assertEqual(config.quantization_config.bits, 8)
+        self.assertEqual(config.quantization_config.group_size, 128)
+
+    def test_dense_config_has_no_quantization_metadata(self) -> None:
+        config = Qwen3Config.from_dict(valid_config())
+
+        self.assertIsNone(config.quantization_config)
+
+    def test_rejects_unsupported_gptq_metadata(self) -> None:
+        for field, value in (
+            ("bits", 4),
+            ("checkpoint_format", "marlin"),
+            ("desc_act", True),
+            ("group_size", 64),
+            ("lm_head", True),
+            ("pack_dtype", "int16"),
+            ("quant_method", "awq"),
+            ("sym", False),
+        ):
+            with self.subTest(field=field):
+                raw = valid_config()
+                quantization = valid_gptq_config()
+                quantization[field] = value
+                raw["quantization_config"] = quantization
+
+                with self.assertRaisesRegex(
+                    ConfigError, rf"quantization_config\.{field}"
+                ):
+                    Qwen3Config.from_dict(raw)
+
     def test_shared_loader_dispatches_qwen_by_model_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)

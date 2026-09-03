@@ -9,7 +9,7 @@ from typing import Iterator, Sequence
 
 import torch
 
-from mini_llm.config import load_config
+from mini_llm.config import DecoderConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.model_loader import load_model
@@ -26,6 +26,16 @@ _DTYPES = {
     "bfloat16": torch.bfloat16,
     "float32": torch.float32,
 }
+
+
+def infer_quantization(model_config: DecoderConfig) -> str:
+    """Infer the only valid runtime mode from checkpoint metadata."""
+
+    return (
+        "gptq-marlin"
+        if model_config.quantization_config is not None
+        else "dense"
+    )
 
 
 def resolve_device(requested: str | torch.device = "auto") -> torch.device:
@@ -112,6 +122,7 @@ class Engine:
     dtype: torch.dtype
     max_seq_len: int
     load_seconds: float
+    quantization: str = "dense"
 
     @classmethod
     def from_model_dir(
@@ -126,6 +137,12 @@ class Engine:
 
         started = time.perf_counter()
         config = load_config(model_dir)
+        selected_quantization = infer_quantization(config)
+        if selected_quantization == "gptq-marlin":
+            raise EngineError(
+                "gptq-marlin checkpoint loading is not implemented until "
+                "the checkpoint and backend adapter steps"
+            )
         tokenizer = load_tokenizer(model_dir, model_config=config)
         model = load_model(model_dir, model_config=config)
         model.config.validate_context_length(max_seq_len)
@@ -138,6 +155,7 @@ class Engine:
             dtype=loaded_parameter.dtype,
             max_seq_len=max_seq_len,
             load_seconds=0.0,
+            quantization=selected_quantization,
         )
         engine.to(device=device, dtype=dtype)
         load_seconds = time.perf_counter() - started

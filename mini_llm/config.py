@@ -40,6 +40,80 @@ def _required(
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class GPTQQuantizationConfig:
+    """Supported GPTQ checkpoint metadata, independent of any CUDA backend."""
+
+    bits: int
+    checkpoint_format: str
+    desc_act: bool
+    group_size: int
+    lm_head: bool
+    pack_dtype: str
+    quant_method: str
+    sym: bool
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> Self:
+        if not isinstance(raw, Mapping):
+            raise ConfigError("quantization_config must be an object")
+
+        def required_bool(name: str) -> bool:
+            if name not in raw:
+                raise ConfigError(
+                    f"missing required quantization configuration field: {name}"
+                )
+            value = raw[name]
+            if not isinstance(value, bool):
+                raise ConfigError(
+                    f"quantization_config.{name} must be bool, "
+                    f"got {type(value).__name__}"
+                )
+            return value
+
+        config = cls(
+            bits=_required(raw, "bits", int),
+            checkpoint_format=_required(raw, "checkpoint_format", str),
+            desc_act=required_bool("desc_act"),
+            group_size=_required(raw, "group_size", int),
+            lm_head=required_bool("lm_head"),
+            pack_dtype=_required(raw, "pack_dtype", str),
+            quant_method=_required(raw, "quant_method", str),
+            sym=required_bool("sym"),
+        )
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        expected = {
+            "bits": (self.bits, 8),
+            "checkpoint_format": (self.checkpoint_format, "gptq"),
+            "desc_act": (self.desc_act, False),
+            "group_size": (self.group_size, 128),
+            "lm_head": (self.lm_head, False),
+            "pack_dtype": (self.pack_dtype, "int32"),
+            "quant_method": (self.quant_method, "gptq"),
+            "sym": (self.sym, True),
+        }
+        for name, (actual, supported) in expected.items():
+            if actual != supported:
+                raise ConfigError(
+                    f"unsupported quantization_config.{name} {actual!r}; "
+                    f"expected {supported!r} for gptq-marlin"
+                )
+
+
+def _quantization_config(
+    raw: Mapping[str, Any],
+) -> GPTQQuantizationConfig | None:
+    value = raw.get("quantization_config")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ConfigError("quantization_config must be an object")
+    return GPTQQuantizationConfig.from_dict(value)
+
+
 def _load_config_dict(model_dir: str | Path) -> dict[str, Any]:
     """Read one model directory's JSON configuration without choosing a family."""
 
@@ -119,6 +193,7 @@ def _common_decoder_fields(
         "torch_dtype": _required(raw, "torch_dtype", str),
         "bos_token_id": _required(raw, "bos_token_id", int),
         "eos_token_ids": _eos_token_ids(raw),
+        "quantization_config": _quantization_config(raw),
     }
 
 
@@ -145,6 +220,7 @@ class DecoderConfig:
     torch_dtype: str
     bos_token_id: int
     eos_token_ids: tuple[int, ...]
+    quantization_config: GPTQQuantizationConfig | None
 
     @classmethod
     def from_model_dir(cls, model_dir: str | Path) -> Self:
@@ -368,6 +444,8 @@ class GraniteMoeConfig(DecoderConfig):
                 raise ConfigError(f"{name} must be positive, got {value}")
         if not self.tie_word_embeddings:
             raise ConfigError("Granite 3.1 requires tied word embeddings")
+        if self.quantization_config is not None:
+            raise ConfigError("gptq-marlin is currently supported only for qwen3")
 
     @property
     def parameters_per_expert(self) -> int:

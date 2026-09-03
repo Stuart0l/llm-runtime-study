@@ -15,6 +15,7 @@ from mini_llm.engine import (
     EngineError,
     resolve_device,
     resolve_dtype,
+    infer_quantization,
     synchronize_device,
 )
 from mini_llm.sampling import SamplingConfig
@@ -100,6 +101,40 @@ class DeviceAndDtypeTests(unittest.TestCase):
         synchronize.assert_called_once_with(torch.device("cuda:0"))
 
 
+class QuantizationDetectionTests(unittest.TestCase):
+    def _config(self, *, quantized: bool) -> MagicMock:
+        config = MagicMock(spec=Qwen3Config)
+        config.quantization_config = MagicMock() if quantized else None
+        return config
+
+    def test_infers_mode_from_checkpoint_metadata(self) -> None:
+        self.assertEqual(
+            infer_quantization(self._config(quantized=False)),
+            "dense",
+        )
+        self.assertEqual(
+            infer_quantization(self._config(quantized=True)),
+            "gptq-marlin",
+        )
+
+    @patch("mini_llm.engine.load_model")
+    @patch("mini_llm.engine.load_tokenizer")
+    @patch("mini_llm.engine.load_config")
+    def test_quantized_loading_stops_before_materializing_runtime(
+        self,
+        load_typed_config: MagicMock,
+        load_tokenizer: MagicMock,
+        load_model: MagicMock,
+    ) -> None:
+        load_typed_config.return_value = self._config(quantized=True)
+
+        with self.assertRaisesRegex(EngineError, "not implemented"):
+            Engine.from_model_dir("quantized-model")
+
+        load_tokenizer.assert_not_called()
+        load_model.assert_not_called()
+
+
 class EngineTests(unittest.TestCase):
     def _mock_engine(self) -> Engine:
         return Engine(
@@ -132,6 +167,7 @@ class EngineTests(unittest.TestCase):
         tokenizer = MagicMock()
         load_tokenizer.return_value = tokenizer
         config = MagicMock(spec=Qwen3Config)
+        config.quantization_config = None
         load_typed_config.return_value = config
 
         engine = Engine.from_model_dir(
@@ -145,6 +181,7 @@ class EngineTests(unittest.TestCase):
         synchronize.assert_called_once_with(torch.device("cpu"))
         self.assertIs(engine.model, model)
         self.assertIs(engine.tokenizer, tokenizer)
+        self.assertEqual(engine.quantization, "dense")
         load_tokenizer.assert_called_once_with(Path("model"), model_config=config)
         load_model.assert_called_once_with(Path("model"), model_config=config)
 
@@ -160,6 +197,7 @@ class EngineTests(unittest.TestCase):
         _synchronize: MagicMock,
     ) -> None:
         config = MagicMock(spec=GraniteMoeConfig)
+        config.quantization_config = None
         load_typed_config.return_value = config
         model = MagicMock()
         model.to.return_value = model
