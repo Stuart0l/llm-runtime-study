@@ -380,6 +380,15 @@ class Qwen3Config(DecoderConfig):
             expected_model_type="qwen3",
             expected_architecture="Qwen3ForCausalLM",
         )
+        if self.quantization_config is not None:
+            if self.torch_dtype != "float16":
+                raise ConfigError(
+                    "gptq-marlin requires checkpoint torch_dtype='float16'"
+                )
+            if not self.tie_word_embeddings:
+                raise ConfigError(
+                    "gptq-marlin with lm_head=false requires tied word embeddings"
+                )
 
 
 @dataclass(frozen=True, slots=True)

@@ -258,69 +258,121 @@ class SafeTensorCheckpoint:
         return {name: tensors[name] for name in selected}
 
 
+def _qwen3_projection_shapes(
+    config: Qwen3Config,
+) -> dict[str, tuple[int, int]]:
+    """Return projection prefixes mapped to logical (input, output) widths."""
+
+    per_layer = {
+        "self_attn.q_proj": (config.hidden_size, config.query_projection_size),
+        "self_attn.k_proj": (config.hidden_size, config.kv_projection_size),
+        "self_attn.v_proj": (config.hidden_size, config.kv_projection_size),
+        "self_attn.o_proj": (config.query_projection_size, config.hidden_size),
+        "mlp.gate_proj": (config.hidden_size, config.intermediate_size),
+        "mlp.up_proj": (config.hidden_size, config.intermediate_size),
+        "mlp.down_proj": (config.intermediate_size, config.hidden_size),
+    }
+    return {
+        f"model.layers.{layer}.{name}": shape
+        for layer in range(config.num_hidden_layers)
+        for name, shape in per_layer.items()
+    }
+
+
+def _gptq_projection_specs(
+    prefix: str,
+    *,
+    in_features: int,
+    out_features: int,
+    bits: int,
+    group_size: int,
+    scale_dtype: str,
+    bias: bool,
+) -> dict[str, TensorSpec]:
+    """Build the GPTQ v1 packed tensor contract for one linear projection."""
+
+    pack_factor = 32 // bits
+    invalid = []
+    if in_features % pack_factor:
+        invalid.append(f"input width {in_features} is not divisible by {pack_factor}")
+    if out_features % pack_factor:
+        invalid.append(
+            f"output width {out_features} is not divisible by {pack_factor}"
+        )
+    if in_features % group_size:
+        invalid.append(
+            f"input width {in_features} is not divisible by group size {group_size}"
+        )
+    if invalid:
+        raise CheckpointValidationError(
+            f"projection {prefix} cannot use the configured GPTQ layout: "
+            + "; ".join(invalid)
+        )
+
+    groups = in_features // group_size
+    specs = {
+        f"{prefix}.qweight": TensorSpec(
+            (in_features // pack_factor, out_features), "I32"
+        ),
+        f"{prefix}.qzeros": TensorSpec(
+            (groups, out_features // pack_factor), "I32"
+        ),
+        f"{prefix}.scales": TensorSpec((groups, out_features), scale_dtype),
+        f"{prefix}.g_idx": TensorSpec((in_features,), "I32"),
+    }
+    if bias:
+        specs[f"{prefix}.bias"] = TensorSpec((out_features,), scale_dtype)
+    return specs
+
+
 def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
-    """Build the exact tensor contract for the supported dense Qwen3 model."""
+    """Build Qwen's logical schema in its declared dense or GPTQ layout."""
 
     dtype = _CONFIG_TO_SAFETENSOR_DTYPE[config.torch_dtype]
-    hidden = config.hidden_size
-    intermediate = config.intermediate_size
-    query = config.query_projection_size
-    key_value = config.kv_projection_size
-    vocab = config.vocab_size
-
+    quantization = config.quantization_config
     specs = {
-        "model.embed_tokens.weight": TensorSpec((vocab, hidden), dtype),
-        "model.norm.weight": TensorSpec((hidden,), dtype),
-        "lm_head.weight": TensorSpec((vocab, hidden), dtype),
+        "model.embed_tokens.weight": TensorSpec(
+            (config.vocab_size, config.hidden_size), dtype
+        ),
+        "model.norm.weight": TensorSpec((config.hidden_size,), dtype),
     }
     for layer in range(config.num_hidden_layers):
         prefix = f"model.layers.{layer}"
-        specs.update(
-            {
-                f"{prefix}.input_layernorm.weight": TensorSpec((hidden,), dtype),
-                f"{prefix}.post_attention_layernorm.weight": TensorSpec(
-                    (hidden,), dtype
-                ),
-                f"{prefix}.self_attn.q_norm.weight": TensorSpec(
-                    (config.head_dim,), dtype
-                ),
-                f"{prefix}.self_attn.k_norm.weight": TensorSpec(
-                    (config.head_dim,), dtype
-                ),
-                f"{prefix}.self_attn.q_proj.weight": TensorSpec(
-                    (query, hidden), dtype
-                ),
-                f"{prefix}.self_attn.k_proj.weight": TensorSpec(
-                    (key_value, hidden), dtype
-                ),
-                f"{prefix}.self_attn.v_proj.weight": TensorSpec(
-                    (key_value, hidden), dtype
-                ),
-                f"{prefix}.self_attn.o_proj.weight": TensorSpec(
-                    (hidden, query), dtype
-                ),
-                f"{prefix}.mlp.gate_proj.weight": TensorSpec(
-                    (intermediate, hidden), dtype
-                ),
-                f"{prefix}.mlp.up_proj.weight": TensorSpec(
-                    (intermediate, hidden), dtype
-                ),
-                f"{prefix}.mlp.down_proj.weight": TensorSpec(
-                    (hidden, intermediate), dtype
-                ),
-            }
+        for name, width in (
+            ("input_layernorm", config.hidden_size),
+            ("post_attention_layernorm", config.hidden_size),
+            ("self_attn.q_norm", config.head_dim),
+            ("self_attn.k_norm", config.head_dim),
+        ):
+            specs[f"{prefix}.{name}.weight"] = TensorSpec((width,), dtype)
+    if quantization is None:
+        specs["lm_head.weight"] = TensorSpec(
+            (config.vocab_size, config.hidden_size), dtype
         )
-        if config.attention_bias:
+
+    for prefix, (in_features, out_features) in _qwen3_projection_shapes(
+        config
+    ).items():
+        has_bias = config.attention_bias and prefix.endswith(
+            ("q_proj", "k_proj", "v_proj")
+        )
+        if quantization is None:
+            specs[f"{prefix}.weight"] = TensorSpec(
+                (out_features, in_features), dtype
+            )
+            if has_bias:
+                specs[f"{prefix}.bias"] = TensorSpec((out_features,), dtype)
+        else:
             specs.update(
-                {
-                    f"{prefix}.self_attn.q_proj.bias": TensorSpec((query,), dtype),
-                    f"{prefix}.self_attn.k_proj.bias": TensorSpec(
-                        (key_value,), dtype
-                    ),
-                    f"{prefix}.self_attn.v_proj.bias": TensorSpec(
-                        (key_value,), dtype
-                    ),
-                }
+                _gptq_projection_specs(
+                    prefix,
+                    in_features=in_features,
+                    out_features=out_features,
+                    bits=quantization.bits,
+                    group_size=quantization.group_size,
+                    scale_dtype=dtype,
+                    bias=has_bias,
+                )
             )
     return specs
 
@@ -411,6 +463,40 @@ def validate_checkpoint(
         expected,
         architecture=config.model_type,
     )
+    if isinstance(config, Qwen3Config) and config.quantization_config is not None:
+        _validate_qwen3_gptq_group_indices(checkpoint, config)
+
+
+def _validate_qwen3_gptq_group_indices(
+    checkpoint: SafeTensorCheckpoint, config: Qwen3Config
+) -> None:
+    """Require canonical non-activation-ordered GPTQ group assignments."""
+
+    quantization = config.quantization_config
+    if quantization is None:
+        return
+    projection_shapes = _qwen3_projection_shapes(config)
+    names = tuple(f"{prefix}.g_idx" for prefix in projection_shapes)
+    indices = checkpoint.get_tensors(names)
+    errors = []
+    for prefix, (in_features, _out_features) in projection_shapes.items():
+        name = f"{prefix}.g_idx"
+        actual = indices[name]
+        expected = torch.arange(in_features, dtype=torch.int32).div(
+            quantization.group_size, rounding_mode="floor"
+        )
+        mismatches = torch.nonzero(actual != expected, as_tuple=False)
+        if mismatches.numel():
+            position = int(mismatches[0, 0])
+            errors.append(
+                f"{name} at index {position}: expected "
+                f"{int(expected[position])}, got {int(actual[position])}"
+            )
+    if errors:
+        details = "\n  - ".join(errors)
+        raise CheckpointValidationError(
+            "checkpoint has invalid GPTQ group indices:\n  - " + details
+        )
 
 
 def validate_qwen3_checkpoint(

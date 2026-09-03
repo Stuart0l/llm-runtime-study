@@ -85,6 +85,7 @@ def valid_gptq_config() -> dict[str, object]:
 class Qwen3ConfigTests(unittest.TestCase):
     def test_parses_supported_gptq_metadata(self) -> None:
         raw = valid_config()
+        raw["torch_dtype"] = "float16"
         raw["quantization_config"] = valid_gptq_config()
 
         config = Qwen3Config.from_dict(raw)
@@ -95,6 +96,17 @@ class Qwen3ConfigTests(unittest.TestCase):
         assert config.quantization_config is not None
         self.assertEqual(config.quantization_config.bits, 8)
         self.assertEqual(config.quantization_config.group_size, 128)
+
+    def test_gptq_requires_fp16_and_tied_embeddings(self) -> None:
+        raw = valid_config()
+        raw["quantization_config"] = valid_gptq_config()
+        with self.assertRaisesRegex(ConfigError, "torch_dtype='float16'"):
+            Qwen3Config.from_dict(raw)
+
+        raw["torch_dtype"] = "float16"
+        raw["tie_word_embeddings"] = False
+        with self.assertRaisesRegex(ConfigError, "tied word embeddings"):
+            Qwen3Config.from_dict(raw)
 
     def test_dense_config_has_no_quantization_metadata(self) -> None:
         config = Qwen3Config.from_dict(valid_config())
