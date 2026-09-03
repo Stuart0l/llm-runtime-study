@@ -13,7 +13,8 @@ import torch
 
 from benchmarks import cache_decode, end_to_end, moe_prefill
 from benchmarks.common import PromptCase, build_prompt_case, render_table
-from mini_llm.engine import Engine, EngineError
+from mini_llm.config import load_config
+from mini_llm.engine import Engine, EngineError, infer_quantization
 
 
 BENCHMARKS = ("cache-decode", "moe-prefill", "end-to-end")
@@ -121,11 +122,20 @@ def _print_results(
 
 
 def run(args: argparse.Namespace, *, output: TextIO) -> None:
-    devices = _selected_devices(args.device)
+    requested_devices = _selected_devices(args.device)
     selected = list(dict.fromkeys(args.benchmark or BENCHMARKS))
     explicitly_selected = args.benchmark is not None
 
     for model_dir in args.model:
+        quantization = infer_quantization(load_config(model_dir))
+        if quantization == "gptq-marlin":
+            if args.device is not None and requested_devices != ["cuda"]:
+                raise BenchmarkError("gptq-marlin benchmarks require CUDA only")
+            if "cuda" not in requested_devices:
+                raise BenchmarkError("gptq-marlin benchmarks require CUDA only")
+            devices = ["cuda"]
+        else:
+            devices = requested_devices
         first_device = devices[0]
         # Allow enough room for tokenization to land slightly above a requested
         # length while keeping cache allocations tied to actual requests.

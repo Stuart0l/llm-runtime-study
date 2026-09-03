@@ -103,10 +103,12 @@ class RunnerTests(unittest.TestCase):
     @patch("benchmarks.__main__.moe_prefill.run", return_value=[])
     @patch("benchmarks.__main__.cache_decode.run", return_value=[])
     @patch("benchmarks.__main__.build_prompt_case")
+    @patch("benchmarks.__main__.load_config")
     @patch("benchmarks.__main__.Engine.from_model_dir")
     def test_loads_once_and_moves_same_engine_after_all_cpu_suites(
         self,
         from_model_dir: MagicMock,
+        load_config: MagicMock,
         build_prompt_case: MagicMock,
         cache_run: MagicMock,
         moe_run: MagicMock,
@@ -114,6 +116,7 @@ class RunnerTests(unittest.TestCase):
         _collect: MagicMock,
         _empty_cache: MagicMock,
     ) -> None:
+        load_config.return_value = SimpleNamespace(quantization_config=None)
         engine = MagicMock()
         engine.device = torch.device("cpu")
         engine.dtype = torch.float16
@@ -196,10 +199,15 @@ class RunnerTests(unittest.TestCase):
             _selected_devices(["cuda"])
 
     @patch("benchmarks.__main__.build_prompt_case")
+    @patch("benchmarks.__main__.load_config")
     @patch("benchmarks.__main__.Engine.from_model_dir")
     def test_explicit_moe_benchmark_rejects_qwen(
-        self, from_model_dir: MagicMock, build_prompt_case: MagicMock
+        self,
+        from_model_dir: MagicMock,
+        load_config: MagicMock,
+        build_prompt_case: MagicMock,
     ) -> None:
+        load_config.return_value = SimpleNamespace(quantization_config=None)
         engine = MagicMock()
         engine.max_seq_len = 97
         engine.load_seconds = 1.0
