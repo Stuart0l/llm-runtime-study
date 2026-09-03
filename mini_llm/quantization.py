@@ -108,6 +108,10 @@ class GPTQMarlinLinear(nn.Module):
         self._canonical_qweight: torch.Tensor | None = None
         self._canonical_scales: torch.Tensor | None = None
 
+    def _apply(self, fn, recurse: bool = True):
+        # Canonical GPTQ tensors stay on CPU; prepare() owns the CUDA layout.
+        return self
+
     def prepare(self, device: torch.device | str) -> None:
         """Preserve canonical CPU tensors and build the Marlin CUDA layout."""
 

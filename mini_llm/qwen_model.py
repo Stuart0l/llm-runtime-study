@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from mini_llm.cache import LayerKVCache
 from mini_llm.config import Qwen3Config
 from mini_llm.modeling import CausalLMBase, DecoderModel
 from mini_llm.nn import Qwen3Attention, RMSNorm, SwiGLUFeedForward
+from mini_llm.quantization import GPTQMarlinLinear
 
 
 class Qwen3DecoderLayer(nn.Module):
@@ -16,6 +18,11 @@ class Qwen3DecoderLayer(nn.Module):
 
     def __init__(self, config: Qwen3Config) -> None:
         super().__init__()
+        linear_type = (
+            GPTQMarlinLinear
+            if config.quantization_config is not None
+            else nn.Linear
+        )
         self.self_attn = Qwen3Attention(
             hidden_size=config.hidden_size,
             num_attention_heads=config.num_attention_heads,
@@ -24,8 +31,13 @@ class Qwen3DecoderLayer(nn.Module):
             rms_norm_eps=config.rms_norm_eps,
             attention_bias=config.attention_bias,
             attention_dropout=config.attention_dropout,
+            linear_type=linear_type,
         )
-        self.mlp = SwiGLUFeedForward(config.hidden_size, config.intermediate_size)
+        self.mlp = SwiGLUFeedForward(
+            config.hidden_size,
+            config.intermediate_size,
+            linear_type=linear_type,
+        )
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, config.rms_norm_eps
@@ -69,7 +81,20 @@ class Qwen3ForCausalLM(CausalLMBase):
         super().__init__()
         self.config = config
         self.model = Qwen3Model(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = (
+            None
+            if config.quantization_config is not None
+            else nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        )
+
+    def prepare_quantized(self, device: torch.device | str) -> None:
+        if self.config.quantization_config is None:
+            raise RuntimeError("cannot prepare a dense Qwen model as gptq-marlin")
+        for module in self.modules():
+            if isinstance(module, GPTQMarlinLinear):
+                module.prepare(device)
 
     def _project_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self.lm_head is None:
+            return F.linear(hidden_states, self.model.embed_tokens.weight)
         return self.lm_head(hidden_states)

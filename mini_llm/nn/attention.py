@@ -51,6 +51,7 @@ class GroupedQueryAttention(nn.Module):
         attention_scale: float | None = None,
         attention_bias: bool = False,
         attention_dropout: float = 0.0,
+        linear_type: type[nn.Module] = nn.Linear,
     ) -> None:
         super().__init__()
         positive_dimensions = {
@@ -96,16 +97,16 @@ class GroupedQueryAttention(nn.Module):
         )
         self.attention_dropout = attention_dropout
 
-        self.q_proj = nn.Linear(
+        self.q_proj = linear_type(
             hidden_size, self.query_projection_size, bias=attention_bias
         )
-        self.k_proj = nn.Linear(
+        self.k_proj = linear_type(
             hidden_size, self.kv_projection_size, bias=attention_bias
         )
-        self.v_proj = nn.Linear(
+        self.v_proj = linear_type(
             hidden_size, self.kv_projection_size, bias=attention_bias
         )
-        self.o_proj = nn.Linear(self.query_projection_size, hidden_size, bias=False)
+        self.o_proj = linear_type(self.query_projection_size, hidden_size, bias=False)
 
     def _split_heads(self, states: torch.Tensor, num_heads: int) -> torch.Tensor:
         batch_size, sequence_length, _ = states.shape
@@ -213,6 +214,7 @@ class Qwen3Attention(GroupedQueryAttention):
         rms_norm_eps: float = 1e-6,
         attention_bias: bool = False,
         attention_dropout: float = 0.0,
+        linear_type: type[nn.Module] = nn.Linear,
     ) -> None:
         if rms_norm_eps <= 0:
             raise ValueError(f"rms_norm_eps must be positive, got {rms_norm_eps}")
@@ -223,6 +225,7 @@ class Qwen3Attention(GroupedQueryAttention):
             head_dim,
             attention_bias=attention_bias,
             attention_dropout=attention_dropout,
+            linear_type=linear_type,
         )
         self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps)

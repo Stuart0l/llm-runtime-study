@@ -26,7 +26,13 @@ class SwiGLUFeedForward(nn.Module):
     decoder layer's ``mlp`` attribute.
     """
 
-    def __init__(self, hidden_size: int, intermediate_size: int) -> None:
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        *,
+        linear_type: type[nn.Module] = nn.Linear,
+    ) -> None:
         super().__init__()
         if hidden_size <= 0:
             raise ValueError(f"hidden_size must be positive, got {hidden_size}")
@@ -37,9 +43,9 @@ class SwiGLUFeedForward(nn.Module):
 
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.gate_proj = linear_type(hidden_size, intermediate_size, bias=False)
+        self.up_proj = linear_type(hidden_size, intermediate_size, bias=False)
+        self.down_proj = linear_type(intermediate_size, hidden_size, bias=False)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if not inputs.is_floating_point():
