@@ -117,22 +117,6 @@ class QuantizationDetectionTests(unittest.TestCase):
             "gptq-marlin",
         )
 
-    @patch("mini_llm.engine.load_model")
-    @patch("mini_llm.engine.load_tokenizer")
-    @patch("mini_llm.engine.load_config")
-    def test_quantized_loading_stops_before_materializing_runtime(
-        self,
-        load_typed_config: MagicMock,
-        load_tokenizer: MagicMock,
-        load_model: MagicMock,
-    ) -> None:
-        load_typed_config.return_value = self._config(quantized=True)
-
-        with self.assertRaisesRegex(EngineError, "not implemented"):
-            Engine.from_model_dir("quantized-model")
-
-        load_tokenizer.assert_not_called()
-        load_model.assert_not_called()
 
 
 class EngineTests(unittest.TestCase):

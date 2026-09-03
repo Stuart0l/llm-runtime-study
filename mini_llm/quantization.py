@@ -59,6 +59,22 @@ def _load_vllm_marlin_ops() -> None:
         )
 
 
+def validate_gptq_marlin_device(device: torch.device | str) -> torch.device:
+    """Validate the CUDA target and initialize the pinned Marlin backend."""
+
+    target = torch.device(device)
+    if platform.system() != "Linux":
+        raise RuntimeError("gptq-marlin requires Linux")
+    if target.type != "cuda":
+        raise RuntimeError(f"gptq-marlin requires a CUDA device, got {target}")
+    if not torch.cuda.is_available():
+        raise RuntimeError("gptq-marlin requires an available CUDA device")
+    if torch.cuda.get_device_capability(target) < (7, 5):
+        raise RuntimeError("gptq-marlin requires CUDA compute capability 7.5+")
+    _load_vllm_marlin_ops()
+    return target
+
+
 class GPTQMarlinLinear(nn.Module):
     """Group-size-128 symmetric GPTQ INT8 linear projection for CUDA."""
 
@@ -115,15 +131,7 @@ class GPTQMarlinLinear(nn.Module):
     def prepare(self, device: torch.device | str) -> None:
         """Preserve canonical CPU tensors and build the Marlin CUDA layout."""
 
-        target = torch.device(device)
-        if platform.system() != "Linux":
-            raise RuntimeError("gptq-marlin requires Linux")
-        if target.type != "cuda":
-            raise RuntimeError(f"gptq-marlin requires a CUDA device, got {target}")
-        if not torch.cuda.is_available():
-            raise RuntimeError("gptq-marlin requires an available CUDA device")
-        if torch.cuda.get_device_capability(target) < (7, 5):
-            raise RuntimeError("gptq-marlin requires CUDA compute capability 7.5+")
+        target = validate_gptq_marlin_device(device)
         if any(parameter.is_meta for parameter in self.parameters()):
             raise RuntimeError("cannot prepare an unmaterialized gptq-marlin projection")
 
@@ -133,7 +141,6 @@ class GPTQMarlinLinear(nn.Module):
         assert self._canonical_qweight is not None
         assert self._canonical_scales is not None
 
-        _load_vllm_marlin_ops()
         packed = self._canonical_qweight.to(target)
         empty_permutation = torch.empty(0, dtype=torch.int32, device=target)
         packed = torch.ops._C.gptq_marlin_repack(

@@ -13,6 +13,7 @@ from mini_llm.config import DecoderConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.model_loader import load_model
+from mini_llm.quantization import validate_gptq_marlin_device
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import load_tokenizer
 
@@ -36,6 +37,21 @@ def infer_quantization(model_config: DecoderConfig) -> str:
         if model_config.quantization_config is not None
         else "dense"
     )
+
+
+def _validate_quantized_placement(
+    quantization: str, device: torch.device, dtype: torch.dtype
+) -> None:
+    if quantization != "gptq-marlin":
+        return
+    if device.type != "cuda":
+        raise EngineError(f"gptq-marlin requires CUDA, got {device}")
+    if dtype != torch.float16:
+        raise EngineError(f"gptq-marlin requires float16, got {dtype}")
+    try:
+        validate_gptq_marlin_device(device)
+    except RuntimeError as exc:
+        raise EngineError(str(exc)) from exc
 
 
 def resolve_device(requested: str | torch.device = "auto") -> torch.device:
@@ -138,11 +154,11 @@ class Engine:
         started = time.perf_counter()
         config = load_config(model_dir)
         selected_quantization = infer_quantization(config)
-        if selected_quantization == "gptq-marlin":
-            raise EngineError(
-                "gptq-marlin checkpoint loading is not implemented until "
-                "the checkpoint and backend adapter steps"
-            )
+        selected_device = resolve_device(device)
+        selected_dtype = resolve_dtype(dtype, device=selected_device)
+        _validate_quantized_placement(
+            selected_quantization, selected_device, selected_dtype
+        )
         tokenizer = load_tokenizer(model_dir, model_config=config)
         model = load_model(model_dir, model_config=config)
         model.config.validate_context_length(max_seq_len)
@@ -157,7 +173,7 @@ class Engine:
             load_seconds=0.0,
             quantization=selected_quantization,
         )
-        engine.to(device=device, dtype=dtype)
+        engine.to(device=selected_device, dtype=selected_dtype)
         load_seconds = time.perf_counter() - started
         engine.load_seconds = load_seconds
         return engine
@@ -206,10 +222,15 @@ class Engine:
         )
         if selected_device == self.device and selected_dtype == self.dtype:
             return self
+        _validate_quantized_placement(
+            self.quantization, selected_device, selected_dtype
+        )
 
         # CausalLMBase._apply clears the device- and dtype-specific KV cache.
         # Module.to preserves eval mode and requires_grad flags.
         self.model.to(device=selected_device, dtype=selected_dtype)
+        if self.quantization == "gptq-marlin":
+            self.model.prepare_quantized(selected_device)
         # Model precision applies to learned weights and activations, but RoPE
         # angles should still start from FP32 inverse frequencies. Module.to
         # converts every floating buffer, so rebuild this buffer afterward.
