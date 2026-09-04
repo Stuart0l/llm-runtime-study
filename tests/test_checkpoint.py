@@ -17,8 +17,6 @@ from mini_llm.checkpoint import (
     expected_granite_moe_tensors,
     expected_qwen3_tensors,
     validate_checkpoint,
-    validate_granite_moe_checkpoint,
-    validate_qwen3_checkpoint,
 )
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
 
@@ -245,7 +243,7 @@ class CheckpointSchemaTests(unittest.TestCase):
             save_file(tensors_for(config), path, metadata={"format": "pt"})
             checkpoint = SafeTensorCheckpoint(path)
 
-            validate_qwen3_checkpoint(checkpoint, config)
+            validate_checkpoint(checkpoint, config)
 
         self.assertEqual(checkpoint.tensor_count, 14)
         self.assertEqual(checkpoint.metadata, {"format": "pt"})
@@ -261,7 +259,7 @@ class CheckpointSchemaTests(unittest.TestCase):
             checkpoint = SafeTensorCheckpoint(path)
 
             with self.assertRaises(CheckpointValidationError) as caught:
-                validate_qwen3_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
         message = str(caught.exception)
         self.assertIn("missing tensors: model.norm.weight", message)
@@ -278,7 +276,7 @@ class CheckpointSchemaTests(unittest.TestCase):
             checkpoint = SafeTensorCheckpoint(path)
 
             with self.assertRaises(CheckpointValidationError) as caught:
-                validate_qwen3_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
         message = str(caught.exception)
         self.assertIn("shape mismatch for model.norm.weight", message)
@@ -339,7 +337,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
             save_file(gptq_tensors_for(config), path)
             checkpoint = SafeTensorCheckpoint(path)
 
-            validate_qwen3_checkpoint(checkpoint, config)
+            validate_checkpoint(checkpoint, config)
 
         self.assertEqual(checkpoint.tensor_count, 34)
 
@@ -356,7 +354,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
             checkpoint = SafeTensorCheckpoint(path)
 
             with self.assertRaises(CheckpointValidationError) as caught:
-                validate_qwen3_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
         message = str(caught.exception)
         self.assertIn(f"shape mismatch for {qweight}", message)
@@ -376,7 +374,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
                 CheckpointValidationError,
                 rf"{name} at index 129: expected 1, got 0",
             ):
-                validate_qwen3_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
     def test_validates_sharded_gptq_checkpoint(self) -> None:
         config = tiny_gptq_config()
@@ -386,7 +384,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
             save_sharded_checkpoint(model_dir, tensors)
             checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
 
-            validate_qwen3_checkpoint(checkpoint, config)
+            validate_checkpoint(checkpoint, config)
 
         self.assertTrue(checkpoint.is_sharded)
         self.assertEqual(checkpoint.tensor_count, 34)
@@ -426,7 +424,6 @@ class GraniteCheckpointSchemaTests(unittest.TestCase):
             save_file(granite_tensors_for(config), path)
             checkpoint = SafeTensorCheckpoint(path)
 
-            validate_granite_moe_checkpoint(checkpoint, config)
             validate_checkpoint(checkpoint, config)
 
         self.assertEqual(checkpoint.tensor_count, 11)
@@ -445,7 +442,7 @@ class GraniteCheckpointSchemaTests(unittest.TestCase):
             checkpoint = SafeTensorCheckpoint(path)
 
             with self.assertRaises(CheckpointValidationError) as caught:
-                validate_granite_moe_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
         message = str(caught.exception)
         self.assertIn(f"shape mismatch for {input_name}", message)
@@ -464,7 +461,7 @@ class GraniteCheckpointSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 CheckpointValidationError, "unexpected tensors: lm_head.weight"
             ):
-                validate_granite_moe_checkpoint(checkpoint, config)
+                validate_checkpoint(checkpoint, config)
 
 
 class ShardedCheckpointTests(unittest.TestCase):
@@ -482,7 +479,7 @@ class ShardedCheckpointTests(unittest.TestCase):
                 model_dir, tensors, metadata={"format": "pt"}
             )
             checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
-            validate_qwen3_checkpoint(checkpoint, config)
+            validate_checkpoint(checkpoint, config)
 
             names = ["model.embed_tokens.weight", "model.norm.weight"]
             loaded = checkpoint.get_tensors(names)
@@ -527,7 +524,7 @@ class LocalCheckpointIntegrationTests(unittest.TestCase):
         cls.checkpoint = SafeTensorCheckpoint.from_model_dir(QWEN_MODEL_DIR)
 
     def test_local_checkpoint_matches_complete_schema(self) -> None:
-        validate_qwen3_checkpoint(self.checkpoint, self.config)
+        validate_checkpoint(self.checkpoint, self.config)
         self.assertEqual(self.checkpoint.tensor_count, 311)
 
     def test_local_manifest_does_not_materialize_payloads(self) -> None:
@@ -560,7 +557,7 @@ class GPTQLocalCheckpointIntegrationTests(unittest.TestCase):
         cls.checkpoint = SafeTensorCheckpoint.from_model_dir(QWEN_GPTQ_MODEL_DIR)
 
     def test_local_checkpoint_matches_all_898_tensor_specs(self) -> None:
-        validate_qwen3_checkpoint(self.checkpoint, self.config)
+        validate_checkpoint(self.checkpoint, self.config)
 
         self.assertEqual(self.checkpoint.tensor_count, 898)
         self.assertEqual(
@@ -596,7 +593,7 @@ class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
         cls.checkpoint = SafeTensorCheckpoint.from_model_dir(GRANITE_MODEL_DIR)
 
     def test_local_checkpoint_matches_all_218_tensor_specs(self) -> None:
-        validate_granite_moe_checkpoint(self.checkpoint, self.config)
+        validate_checkpoint(self.checkpoint, self.config)
 
         self.assertEqual(self.checkpoint.tensor_count, 218)
         self.assertEqual(

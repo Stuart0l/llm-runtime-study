@@ -14,14 +14,11 @@ import torch
 
 from mini_llm.config import DecoderConfig, GraniteMoeConfig, Qwen3Config
 
-
 class CheckpointError(ValueError):
     """Raised when a checkpoint cannot be read or does not match the model."""
 
-
 class CheckpointValidationError(CheckpointError):
     """Raised when checkpoint contents do not match the expected tensor schema."""
-
 
 _SAFETENSOR_DTYPE_BYTES = {
     "BOOL": 1,
@@ -45,7 +42,6 @@ _CONFIG_TO_SAFETENSOR_DTYPE = {
     "float32": "F32",
 }
 
-
 @dataclass(frozen=True, slots=True)
 class TensorInfo:
     """Header information for one serialized tensor."""
@@ -56,14 +52,12 @@ class TensorInfo:
     num_elements: int
     num_bytes: int
 
-
 @dataclass(frozen=True, slots=True)
 class TensorSpec:
     """Expected shape and dtype for one model tensor."""
 
     shape: tuple[int, ...]
     dtype: str
-
 
 class SafeTensorCheckpoint:
     """Read a single-file or indexed sharded checkpoint lazily.
@@ -257,7 +251,6 @@ class SafeTensorCheckpoint:
             raise CheckpointError("could not load checkpoint tensors") from exc
         return {name: tensors[name] for name in selected}
 
-
 def _qwen3_projection_shapes(
     config: Qwen3Config,
 ) -> dict[str, tuple[int, int]]:
@@ -277,7 +270,6 @@ def _qwen3_projection_shapes(
         for layer in range(config.num_hidden_layers)
         for name, shape in per_layer.items()
     }
-
 
 def _gptq_projection_specs(
     prefix: str,
@@ -324,63 +316,80 @@ def _gptq_projection_specs(
         specs[f"{prefix}.bias"] = TensorSpec((out_features,), scale_dtype)
     return specs
 
+def _decoder_root_specs(config: DecoderConfig, dtype: str) -> dict[str, TensorSpec]:
+    """Return tensor specs shared by supported decoder checkpoint layouts."""
 
-def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
-    """Build Qwen's logical schema in its declared dense or GPTQ layout."""
-
-    dtype = _CONFIG_TO_SAFETENSOR_DTYPE[config.torch_dtype]
-    quantization = config.quantization_config
-    specs = {
+    return {
         "model.embed_tokens.weight": TensorSpec(
             (config.vocab_size, config.hidden_size), dtype
         ),
         "model.norm.weight": TensorSpec((config.hidden_size,), dtype),
     }
+
+def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
+    """Build the Qwen logical schema in its declared dense or GPTQ layout."""
+
+    dtype = _CONFIG_TO_SAFETENSOR_DTYPE[config.torch_dtype]
+    quantization = config.quantization_config
+    specs = _decoder_root_specs(config, dtype)
+    layer_specs = {
+        "input_layernorm.weight": TensorSpec((config.hidden_size,), dtype),
+        "post_attention_layernorm.weight": TensorSpec((config.hidden_size,), dtype),
+        "self_attn.q_norm.weight": TensorSpec((config.head_dim,), dtype),
+        "self_attn.k_norm.weight": TensorSpec((config.head_dim,), dtype),
+    }
+    projection_names = (
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+        "mlp.gate_proj",
+        "mlp.up_proj",
+        "mlp.down_proj",
+    )
+    projection_shapes = _qwen3_projection_shapes(config)
     for layer in range(config.num_hidden_layers):
         prefix = f"model.layers.{layer}"
-        for name, width in (
-            ("input_layernorm", config.hidden_size),
-            ("post_attention_layernorm", config.hidden_size),
-            ("self_attn.q_norm", config.head_dim),
-            ("self_attn.k_norm", config.head_dim),
-        ):
-            specs[f"{prefix}.{name}.weight"] = TensorSpec((width,), dtype)
+        specs.update(
+            {f"{prefix}.{name}": spec for name, spec in layer_specs.items()}
+        )
+        for name in projection_names:
+            projection = f"{prefix}.{name}"
+            in_features, out_features = projection_shapes[projection]
+            has_bias = config.attention_bias and name.endswith(
+                ("q_proj", "k_proj", "v_proj")
+            )
+            if quantization is None:
+                specs[f"{projection}.weight"] = TensorSpec(
+                    (out_features, in_features), dtype
+                )
+                if has_bias:
+                    specs[f"{projection}.bias"] = TensorSpec(
+                        (out_features,), dtype
+                    )
+            else:
+                specs.update(
+                    _gptq_projection_specs(
+                        projection,
+                        in_features=in_features,
+                        out_features=out_features,
+                        bits=quantization.bits,
+                        group_size=quantization.group_size,
+                        scale_dtype=dtype,
+                        bias=has_bias,
+                    )
+                )
     if quantization is None:
         specs["lm_head.weight"] = TensorSpec(
             (config.vocab_size, config.hidden_size), dtype
         )
-
-    for prefix, (in_features, out_features) in _qwen3_projection_shapes(
-        config
-    ).items():
-        has_bias = config.attention_bias and prefix.endswith(
-            ("q_proj", "k_proj", "v_proj")
-        )
-        if quantization is None:
-            specs[f"{prefix}.weight"] = TensorSpec(
-                (out_features, in_features), dtype
-            )
-            if has_bias:
-                specs[f"{prefix}.bias"] = TensorSpec((out_features,), dtype)
-        else:
-            specs.update(
-                _gptq_projection_specs(
-                    prefix,
-                    in_features=in_features,
-                    out_features=out_features,
-                    bits=quantization.bits,
-                    group_size=quantization.group_size,
-                    scale_dtype=dtype,
-                    bias=has_bias,
-                )
-            )
     return specs
 
 
 def expected_granite_moe_tensors(
     config: GraniteMoeConfig,
 ) -> dict[str, TensorSpec]:
-    """Build Granite's exact tied-embedding and packed-expert tensor contract."""
+    """Build the Granite tied-embedding and packed-expert tensor contract."""
 
     dtype = _CONFIG_TO_SAFETENSOR_DTYPE[config.torch_dtype]
     hidden = config.hidden_size
@@ -389,47 +398,34 @@ def expected_granite_moe_tensors(
     key_value = config.kv_projection_size
     experts = config.num_local_experts
 
-    # Granite ties the output projection to this embedding matrix, so there is
-    # deliberately no separate lm_head.weight tensor in the checkpoint.
-    specs = {
-        "model.embed_tokens.weight": TensorSpec(
-            (config.vocab_size, hidden), dtype
+    # Granite ties the output projection to its embedding matrix, so it has no
+    # separate lm_head.weight tensor.
+    specs = _decoder_root_specs(config, dtype)
+    layer_specs = {
+        "input_layernorm.weight": TensorSpec((hidden,), dtype),
+        "post_attention_layernorm.weight": TensorSpec((hidden,), dtype),
+        "self_attn.q_proj.weight": TensorSpec((query, hidden), dtype),
+        "self_attn.k_proj.weight": TensorSpec((key_value, hidden), dtype),
+        "self_attn.v_proj.weight": TensorSpec((key_value, hidden), dtype),
+        "self_attn.o_proj.weight": TensorSpec((hidden, query), dtype),
+        "block_sparse_moe.router.layer.weight": TensorSpec(
+            (experts, hidden), dtype
         ),
-        "model.norm.weight": TensorSpec((hidden,), dtype),
+        # Gate and up projections are packed together along dimension 1.
+        "block_sparse_moe.input_linear.weight": TensorSpec(
+            (experts, 2 * intermediate, hidden), dtype
+        ),
+        "block_sparse_moe.output_linear.weight": TensorSpec(
+            (experts, hidden, intermediate), dtype
+        ),
     }
     for layer in range(config.num_hidden_layers):
         prefix = f"model.layers.{layer}"
         specs.update(
-            {
-                f"{prefix}.input_layernorm.weight": TensorSpec((hidden,), dtype),
-                f"{prefix}.post_attention_layernorm.weight": TensorSpec(
-                    (hidden,), dtype
-                ),
-                f"{prefix}.self_attn.q_proj.weight": TensorSpec(
-                    (query, hidden), dtype
-                ),
-                f"{prefix}.self_attn.k_proj.weight": TensorSpec(
-                    (key_value, hidden), dtype
-                ),
-                f"{prefix}.self_attn.v_proj.weight": TensorSpec(
-                    (key_value, hidden), dtype
-                ),
-                f"{prefix}.self_attn.o_proj.weight": TensorSpec(
-                    (hidden, query), dtype
-                ),
-                f"{prefix}.block_sparse_moe.router.layer.weight": TensorSpec(
-                    (experts, hidden), dtype
-                ),
-                # Gate and up projections are packed together along dimension 1.
-                f"{prefix}.block_sparse_moe.input_linear.weight": TensorSpec(
-                    (experts, 2 * intermediate, hidden), dtype
-                ),
-                f"{prefix}.block_sparse_moe.output_linear.weight": TensorSpec(
-                    (experts, hidden, intermediate), dtype
-                ),
-            }
+            {f"{prefix}.{name}": spec for name, spec in layer_specs.items()}
         )
     return specs
+
 
 
 CHECKPOINT_SCHEMA_BUILDERS: dict[
@@ -438,7 +434,6 @@ CHECKPOINT_SCHEMA_BUILDERS: dict[
     "qwen3": expected_qwen3_tensors,
     "granitemoe": expected_granite_moe_tensors,
 }
-
 
 def expected_model_tensors(config: DecoderConfig) -> dict[str, TensorSpec]:
     """Build the registered tensor schema for a model configuration."""
@@ -465,7 +460,6 @@ def validate_checkpoint(
     )
     if isinstance(config, Qwen3Config) and config.quantization_config is not None:
         _validate_qwen3_gptq_group_indices(checkpoint, config)
-
 
 def _validate_qwen3_gptq_group_indices(
     checkpoint: SafeTensorCheckpoint, config: Qwen3Config
@@ -497,23 +491,6 @@ def _validate_qwen3_gptq_group_indices(
         raise CheckpointValidationError(
             "checkpoint has invalid GPTQ group indices:\n  - " + details
         )
-
-
-def validate_qwen3_checkpoint(
-    checkpoint: SafeTensorCheckpoint, config: Qwen3Config
-) -> None:
-    """Compatibility entry point for strict Qwen3 checkpoint validation."""
-
-    validate_checkpoint(checkpoint, config)
-
-
-def validate_granite_moe_checkpoint(
-    checkpoint: SafeTensorCheckpoint, config: GraniteMoeConfig
-) -> None:
-    """Validate Granite's tied embeddings and packed MoE tensor layout."""
-
-    validate_checkpoint(checkpoint, config)
-
 
 def _validate_tensor_manifest(
     checkpoint: SafeTensorCheckpoint,
