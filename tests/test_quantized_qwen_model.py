@@ -143,11 +143,9 @@ class QuantizedQwenModelTests(unittest.TestCase):
             self.assertEqual(logits.shape, (1, 1, model.config.vocab_size))
             self.assertEqual(logits.dtype, torch.float16)
             self.assertTrue(torch.isfinite(logits).all().item())
-            self.assertTrue(
-                all(
-                    projection.qweight.device.type == "cuda"
-                    for projection in projections
-                )
+            self.assertEqual(
+                sum(projection.qweight.device.type == "cuda" for projection in projections),
+                56,
             )
             self.assertTrue(
                 all(
@@ -155,6 +153,12 @@ class QuantizedQwenModelTests(unittest.TestCase):
                     and projection._canonical_qweight.device.type == "cpu"
                     for projection in projections
                 )
+            )
+            self.assertTrue(
+                all(layer.self_attn._qkv_fusion is not None for layer in model.model.layers)
+            )
+            self.assertTrue(
+                all(layer.mlp._gate_up_fusion is not None for layer in model.model.layers)
             )
         finally:
             del model

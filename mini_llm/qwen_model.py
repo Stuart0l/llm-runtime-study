@@ -90,9 +90,11 @@ class Qwen3ForCausalLM(CausalLMBase):
     def prepare_quantized(self, device: torch.device | str) -> None:
         if self.config.quantization_config is None:
             raise RuntimeError("cannot prepare a dense Qwen model as gptq-marlin")
-        for module in self.modules():
-            if isinstance(module, GPTQMarlinLinear):
-                module.prepare(device)
+        for layer in self.model.layers:
+            layer.self_attn.prepare_qkv_fusion(device)
+            layer.mlp.prepare_gate_up_fusion(device)
+            layer.self_attn.o_proj.prepare(device)
+            layer.mlp.down_proj.prepare(device)
 
     def _project_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.lm_head is None:

@@ -8,6 +8,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from mini_llm.fusion import FusedMarlinProjection
+from mini_llm.quantization import GPTQMarlinLinear
 from mini_llm.cache import LayerKVCache
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys
 from mini_llm.nn.rope import apply_rotary_position_embeddings
@@ -107,6 +109,21 @@ class GroupedQueryAttention(nn.Module):
             hidden_size, self.kv_projection_size, bias=attention_bias
         )
         self.o_proj = linear_type(self.query_projection_size, hidden_size, bias=False)
+        self._qkv_fusion: FusedMarlinProjection | None = None
+
+    def prepare_qkv_fusion(self, device: torch.device | str) -> None:
+        if not all(
+            isinstance(projection, GPTQMarlinLinear)
+            for projection in (self.q_proj, self.k_proj, self.v_proj)
+        ):
+            raise RuntimeError("QKV fusion requires GPTQ-Marlin projections")
+        fusion = FusedMarlinProjection(self.q_proj, self.k_proj, self.v_proj)
+        fusion.prepare(device)
+        self._qkv_fusion = fusion
+
+    def _apply(self, fn, recurse: bool = True):
+        self._qkv_fusion = None
+        return super()._apply(fn, recurse=recurse)
 
     def _split_heads(self, states: torch.Tensor, num_heads: int) -> torch.Tensor:
         batch_size, sequence_length, _ = states.shape
@@ -140,11 +157,22 @@ class GroupedQueryAttention(nn.Module):
                 f"{self.hidden_size}], got {tuple(inputs.shape)}"
             )
 
-        queries = self._split_heads(
-            self.q_proj(inputs), self.num_attention_heads
-        )
-        keys = self._split_heads(self.k_proj(inputs), self.num_key_value_heads)
-        values = self._split_heads(self.v_proj(inputs), self.num_key_value_heads)
+        if self._qkv_fusion is None:
+            query_states = self.q_proj(inputs)
+            key_states = self.k_proj(inputs)
+            value_states = self.v_proj(inputs)
+        else:
+            query_states, key_states, value_states = self._qkv_fusion(inputs).split(
+                (
+                    self.query_projection_size,
+                    self.kv_projection_size,
+                    self.kv_projection_size,
+                ),
+                dim=-1,
+            )
+        queries = self._split_heads(query_states, self.num_attention_heads)
+        keys = self._split_heads(key_states, self.num_key_value_heads)
+        values = self._split_heads(value_states, self.num_key_value_heads)
 
         queries, keys = self._normalize_queries_and_keys(queries, keys)
         queries, keys = apply_rotary_position_embeddings(
