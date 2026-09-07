@@ -15,13 +15,16 @@ MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8"
 
 class FusedMarlinProjectionTests(unittest.TestCase):
     def test_rejects_insufficient_or_incompatible_components(self) -> None:
-        first = GPTQMarlinLinear(128, 128)
-        second = GPTQMarlinLinear(256, 128)
+        first = GPTQMarlinLinear(128, 128, bits=8)
+        second = GPTQMarlinLinear(256, 128, bits=8)
+        int4 = GPTQMarlinLinear(128, 128, bits=4)
 
         with self.assertRaisesRegex(ValueError, "at least two"):
             FusedMarlinProjection(first)
         with self.assertRaisesRegex(ValueError, "share in_features"):
             FusedMarlinProjection(first, second)
+        with self.assertRaisesRegex(ValueError, "share bit width"):
+            FusedMarlinProjection(first, int4)
 
     @unittest.skipUnless(
         torch.cuda.is_available() and MODEL_DIR.is_dir(),
@@ -54,7 +57,7 @@ class FusedMarlinProjectionTests(unittest.TestCase):
                     f"{prefix}.{suffix}"
                     for suffix in ("qweight", "qzeros", "scales", "g_idx")
                 )
-                layer = GPTQMarlinLinear(1024, width)
+                layer = GPTQMarlinLinear(1024, width, bits=8)
                 layer.load_state_dict(
                     {
                         suffix: tensors[f"{prefix}.{suffix}"]

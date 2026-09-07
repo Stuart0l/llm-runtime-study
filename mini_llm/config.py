@@ -29,10 +29,12 @@ def _required(
     if name not in config:
         raise ConfigError(f"missing required configuration field: {name}")
     value = config[name]
-    if not isinstance(value, expected_type) or isinstance(value, bool):
-        expected_types = (
-            expected_type if isinstance(expected_type, tuple) else (expected_type,)
-        )
+    expected_types = (
+        expected_type if isinstance(expected_type, tuple) else (expected_type,)
+    )
+    if not isinstance(value, expected_type) or (
+        isinstance(value, bool) and bool not in expected_types
+    ):
         expected_name = " or ".join(item.__name__ for item in expected_types)
         raise ConfigError(
             f"{name} must be {expected_name}, got {type(value).__name__}"
@@ -58,35 +60,26 @@ class GPTQQuantizationConfig:
         if not isinstance(raw, Mapping):
             raise ConfigError("quantization_config must be an object")
 
-        def required_bool(name: str) -> bool:
-            if name not in raw:
-                raise ConfigError(
-                    f"missing required quantization configuration field: {name}"
-                )
-            value = raw[name]
-            if not isinstance(value, bool):
-                raise ConfigError(
-                    f"quantization_config.{name} must be bool, "
-                    f"got {type(value).__name__}"
-                )
-            return value
-
         config = cls(
             bits=_required(raw, "bits", int),
             checkpoint_format=_required(raw, "checkpoint_format", str),
-            desc_act=required_bool("desc_act"),
+            desc_act=_required(raw, "desc_act", bool),
             group_size=_required(raw, "group_size", int),
-            lm_head=required_bool("lm_head"),
+            lm_head=_required(raw, "lm_head", bool),
             pack_dtype=_required(raw, "pack_dtype", str),
             quant_method=_required(raw, "quant_method", str),
-            sym=required_bool("sym"),
+            sym=_required(raw, "sym", bool),
         )
         config.validate()
         return config
 
     def validate(self) -> None:
+        if self.bits not in (4, 8):
+            raise ConfigError(
+                f"unsupported quantization_config.bits {self.bits!r}; "
+                "expected 4 or 8 for gptq-marlin"
+            )
         expected = {
-            "bits": (self.bits, 8),
             "checkpoint_format": (self.checkpoint_format, "gptq"),
             "desc_act": (self.desc_act, False),
             "group_size": (self.group_size, 128),
@@ -109,8 +102,6 @@ def _quantization_config(
     value = raw.get("quantization_config")
     if value is None:
         return None
-    if not isinstance(value, Mapping):
-        raise ConfigError("quantization_config must be an object")
     return GPTQQuantizationConfig.from_dict(value)
 
 
@@ -381,9 +372,10 @@ class Qwen3Config(DecoderConfig):
             expected_architecture="Qwen3ForCausalLM",
         )
         if self.quantization_config is not None:
-            if self.torch_dtype != "float16":
+            if self.torch_dtype not in ("float16", "bfloat16"):
                 raise ConfigError(
-                    "gptq-marlin requires checkpoint torch_dtype='float16'"
+                    "gptq-marlin requires checkpoint torch_dtype to be "
+                    "'float16' or 'bfloat16'"
                 )
             if not self.tie_word_embeddings:
                 raise ConfigError(

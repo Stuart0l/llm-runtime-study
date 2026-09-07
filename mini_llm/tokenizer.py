@@ -189,10 +189,6 @@ class Qwen3Tokenizer(TextTokenizer):
         chat_tokens = cls.chat_template.tokens
         if tokenizer_config.get("eos_token") != chat_tokens.im_end:
             raise TokenizerError(f"Qwen3 eos_token must be {chat_tokens.im_end!r}")
-        if tokenizer_config.get("pad_token") != chat_tokens.end_of_text:
-            raise TokenizerError(
-                f"Qwen3 pad_token must be {chat_tokens.end_of_text!r}"
-            )
 
         special_tokens = Qwen3SpecialTokenIds(
             end_of_text=cls._required_token_id(

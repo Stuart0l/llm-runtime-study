@@ -15,26 +15,30 @@ MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8"
 
 
 class GPTQMarlinLinearTests(unittest.TestCase):
-    def test_state_names_and_shapes_match_gptq_checkpoint(self) -> None:
-        with torch.device("meta"):
-            layer = GPTQMarlinLinear(1024, 2048)
+    def test_state_names_and_shapes_match_gptq_bit_width(self) -> None:
+        for bits, qweight_rows, qzero_columns in ((4, 128, 256), (8, 256, 512)):
+            with self.subTest(bits=bits), torch.device("meta"):
+                layer = GPTQMarlinLinear(1024, 2048, bits=bits)
 
-        self.assertEqual(
-            set(layer.state_dict()), {"qweight", "qzeros", "scales", "g_idx"}
-        )
-        self.assertEqual(layer.qweight.shape, (256, 2048))
-        self.assertEqual(layer.qzeros.shape, (8, 512))
-        self.assertEqual(layer.scales.shape, (8, 2048))
-        self.assertEqual(layer.g_idx.shape, (1024,))
+            self.assertEqual(
+                set(layer.state_dict()), {"qweight", "qzeros", "scales", "g_idx"}
+            )
+            self.assertEqual(layer.bits, bits)
+            self.assertEqual(layer.qweight.shape, (qweight_rows, 2048))
+            self.assertEqual(layer.qzeros.shape, (8, qzero_columns))
+            self.assertEqual(layer.scales.shape, (8, 2048))
+            self.assertEqual(layer.g_idx.shape, (1024,))
 
     def test_rejects_unsupported_shape_and_bias(self) -> None:
         with self.assertRaisesRegex(ValueError, "64x128-aligned"):
-            GPTQMarlinLinear(96, 96)
+            GPTQMarlinLinear(96, 96, bits=8)
         with self.assertRaisesRegex(NotImplementedError, "does not support bias"):
-            GPTQMarlinLinear(128, 128, bias=True)
+            GPTQMarlinLinear(128, 128, bits=8, bias=True)
+        with self.assertRaisesRegex(ValueError, "supports 4 or 8 bits"):
+            GPTQMarlinLinear(128, 128, bits=3)
 
     def test_requires_preparation_before_forward(self) -> None:
-        layer = GPTQMarlinLinear(128, 128)
+        layer = GPTQMarlinLinear(128, 128, bits=8)
         with self.assertRaisesRegex(RuntimeError, "call prepare"):
             layer(torch.zeros(1, 128, dtype=torch.float16))
 
@@ -64,7 +68,7 @@ class GPTQMarlinLinearTests(unittest.TestCase):
             f"{prefix}.{suffix}"
             for suffix in ("qweight", "qzeros", "scales", "g_idx")
         )
-        layer = GPTQMarlinLinear(1024, 2048)
+        layer = GPTQMarlinLinear(1024, 2048, bits=8)
         layer.load_state_dict(
             {
                 suffix: tensors[f"{prefix}.{suffix}"]

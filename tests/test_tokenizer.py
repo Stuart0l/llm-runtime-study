@@ -17,6 +17,7 @@ from examples.tokenizer_demo import render_token_mapping
 
 
 QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
+QWEN_INT4_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int4"
 GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
@@ -144,6 +145,12 @@ class Qwen3TokenizerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tokenizer = Qwen3Tokenizer.from_model_dir(QWEN_MODEL_DIR)
+
+    def test_int4_checkpoint_tokenizer_loads_with_its_packaging_metadata(self) -> None:
+        tokenizer = Qwen3Tokenizer.from_model_dir(QWEN_INT4_MODEL_DIR)
+
+        self.assertEqual(tokenizer.special_tokens.end_of_text, 151643)
+        self.assertEqual(tokenizer.special_tokens.im_end, 151645)
 
     def test_validates_special_token_ids(self) -> None:
         self.assertEqual(self.tokenizer.special_tokens.end_of_text, 151643)

@@ -22,6 +22,8 @@ class FusedMarlinProjection:
         first = components[0]
         if any(component.in_features != first.in_features for component in components):
             raise ValueError("fused Marlin components must share in_features")
+        if any(component.bits != first.bits for component in components):
+            raise ValueError("fused Marlin components must share bit width")
         self.components = components
         self.in_features = first.in_features
         self.out_features = sum(component.out_features for component in components)
@@ -43,8 +45,11 @@ class FusedMarlinProjection:
 
     def prepare(self, device: torch.device | str) -> None:
         canonical = [self._canonical(component) for component in self.components]
-        combined = GPTQMarlinLinear(self.in_features, self.out_features)
+        combined = GPTQMarlinLinear(
+            self.in_features, self.out_features, bits=self.components[0].bits
+        )
         groups = self.in_features // 128
+        pack_factor = self.components[0].pack_factor
         combined.load_state_dict(
             {
                 "qweight": torch.cat(
@@ -52,7 +57,7 @@ class FusedMarlinProjection:
                 ),
                 "qzeros": torch.empty(
                     groups,
-                    self.out_features // 4,
+                    self.out_features // pack_factor,
                     dtype=torch.int32,
                 ),
                 "scales": torch.cat([scales for _, scales in canonical], dim=1),

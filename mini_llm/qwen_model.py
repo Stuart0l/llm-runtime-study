@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -18,9 +20,10 @@ class Qwen3DecoderLayer(nn.Module):
 
     def __init__(self, config: Qwen3Config) -> None:
         super().__init__()
+        quantization = config.quantization_config
         linear_type = (
-            GPTQMarlinLinear
-            if config.quantization_config is not None
+            partial(GPTQMarlinLinear, bits=quantization.bits)
+            if quantization is not None
             else nn.Linear
         )
         self.self_attn = Qwen3Attention(

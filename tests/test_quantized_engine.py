@@ -12,7 +12,10 @@ from mini_llm.engine import Engine, EngineError
 from mini_llm.interfaces import ChatMessage
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8"
+MODEL_DIRS = (
+    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int4", 4),
+    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8", 8),
+)
 
 
 def _quantized_config() -> MagicMock:
@@ -155,30 +158,36 @@ class QuantizedEngineTests(unittest.TestCase):
 
 
     @unittest.skipUnless(
-        torch.cuda.is_available() and MODEL_DIR.is_dir(),
+        torch.cuda.is_available() and all(path.is_dir() for path, _ in MODEL_DIRS),
         "requires CUDA and the real GPTQ checkpoint",
     )
-    def test_real_checkpoint_generates_through_engine(self) -> None:
-        engine = Engine.from_model_dir(
-            MODEL_DIR, device="cuda", dtype="auto", max_seq_len=64
-        )
-        try:
-            events = list(
-                engine.generate(
-                    [ChatMessage("user", "Say hello.")], max_new_tokens=2
+    def test_real_checkpoints_generate_through_engine(self) -> None:
+        for model_dir, bits in MODEL_DIRS:
+            with self.subTest(bits=bits):
+                engine = Engine.from_model_dir(
+                    model_dir, device="cuda", dtype="auto", max_seq_len=64
                 )
-            )
+                try:
+                    events = list(
+                        engine.generate(
+                            [ChatMessage("user", "Say hello.")], max_new_tokens=2
+                        )
+                    )
 
-            self.assertEqual(engine.quantization, "gptq-marlin")
-            self.assertEqual(engine.device.type, "cuda")
-            self.assertEqual(engine.dtype, torch.float16)
-            self.assertTrue(events)
-            self.assertIsNotNone(engine.model.cache)
-            self.assertEqual(engine.model.cache.device.type, "cuda")
-        finally:
-            del engine
-            gc.collect()
-            torch.cuda.empty_cache()
+                    self.assertEqual(engine.quantization, "gptq-marlin")
+                    assert engine.model.config.quantization_config is not None
+                    self.assertEqual(
+                        engine.model.config.quantization_config.bits, bits
+                    )
+                    self.assertEqual(engine.device.type, "cuda")
+                    self.assertEqual(engine.dtype, torch.float16)
+                    self.assertTrue(events)
+                    self.assertIsNotNone(engine.model.cache)
+                    self.assertEqual(engine.model.cache.device.type, "cuda")
+                finally:
+                    del engine
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

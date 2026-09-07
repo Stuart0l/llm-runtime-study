@@ -23,6 +23,7 @@ from mini_llm.config import GraniteMoeConfig, Qwen3Config
 
 QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
 QWEN_GPTQ_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8"
+QWEN_GPTQ_INT4_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int4"
 GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
@@ -245,8 +246,7 @@ class CheckpointSchemaTests(unittest.TestCase):
 
             validate_checkpoint(checkpoint, config)
 
-        self.assertEqual(checkpoint.tensor_count, 14)
-        self.assertEqual(checkpoint.metadata, {"format": "pt"})
+        self.assertEqual(len(checkpoint.manifest), 14)
 
     def test_reports_missing_and_unexpected_tensors_together(self) -> None:
         config = tiny_config()
@@ -339,7 +339,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
 
             validate_checkpoint(checkpoint, config)
 
-        self.assertEqual(checkpoint.tensor_count, 34)
+        self.assertEqual(len(checkpoint.manifest), 34)
 
     def test_reports_gptq_shape_and_dtype_mismatches(self) -> None:
         config = tiny_gptq_config()
@@ -386,8 +386,7 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
 
             validate_checkpoint(checkpoint, config)
 
-        self.assertTrue(checkpoint.is_sharded)
-        self.assertEqual(checkpoint.tensor_count, 34)
+        self.assertEqual(len(checkpoint.manifest), 34)
 
 
 class GraniteCheckpointSchemaTests(unittest.TestCase):
@@ -426,7 +425,7 @@ class GraniteCheckpointSchemaTests(unittest.TestCase):
 
             validate_checkpoint(checkpoint, config)
 
-        self.assertEqual(checkpoint.tensor_count, 11)
+        self.assertEqual(len(checkpoint.manifest), 11)
 
     def test_reports_packed_expert_shape_and_dtype_errors(self) -> None:
         config = tiny_granite_config()
@@ -475,7 +474,7 @@ class ShardedCheckpointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             model_dir = Path(directory)
-            first, second, weight_map = save_sharded_checkpoint(
+            _, _, weight_map = save_sharded_checkpoint(
                 model_dir, tensors, metadata={"format": "pt"}
             )
             checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
@@ -484,18 +483,6 @@ class ShardedCheckpointTests(unittest.TestCase):
             names = ["model.embed_tokens.weight", "model.norm.weight"]
             loaded = checkpoint.get_tensors(names)
 
-        self.assertTrue(checkpoint.is_sharded)
-        self.assertEqual(checkpoint.shard_paths, (first, second))
-        self.assertEqual(checkpoint.metadata, {"format": "pt"})
-        self.assertEqual(
-            checkpoint.index_metadata,
-            {
-                "total_size": sum(
-                    tensor.numel() * tensor.element_size()
-                    for tensor in tensors.values()
-                )
-            },
-        )
         self.assertNotEqual(weight_map[names[0]], weight_map[names[1]])
         torch.testing.assert_close(loaded[names[0]], tensors[names[0]])
         torch.testing.assert_close(loaded[names[1]], tensors[names[1]])
@@ -525,7 +512,7 @@ class LocalCheckpointIntegrationTests(unittest.TestCase):
 
     def test_local_checkpoint_matches_complete_schema(self) -> None:
         validate_checkpoint(self.checkpoint, self.config)
-        self.assertEqual(self.checkpoint.tensor_count, 311)
+        self.assertEqual(len(self.checkpoint.manifest), 311)
 
     def test_local_manifest_does_not_materialize_payloads(self) -> None:
         info = self.checkpoint.tensor_info(
@@ -559,7 +546,7 @@ class GPTQLocalCheckpointIntegrationTests(unittest.TestCase):
     def test_local_checkpoint_matches_all_898_tensor_specs(self) -> None:
         validate_checkpoint(self.checkpoint, self.config)
 
-        self.assertEqual(self.checkpoint.tensor_count, 898)
+        self.assertEqual(len(self.checkpoint.manifest), 898)
         self.assertEqual(
             sum(info.dtype == "I32" for info in self.checkpoint.manifest),
             588,
@@ -584,6 +571,40 @@ class GPTQLocalCheckpointIntegrationTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
+    has_local_checkpoint(QWEN_GPTQ_INT4_MODEL_DIR),
+    "local Qwen3 INT4 GPTQ checkpoint is unavailable",
+)
+class GPTQInt4LocalCheckpointIntegrationTests(unittest.TestCase):
+    def test_local_checkpoint_matches_inferred_four_bit_schema(self) -> None:
+        config = Qwen3Config.from_model_dir(QWEN_GPTQ_INT4_MODEL_DIR)
+        checkpoint = SafeTensorCheckpoint.from_model_dir(QWEN_GPTQ_INT4_MODEL_DIR)
+
+        validate_checkpoint(checkpoint, config)
+
+        assert config.quantization_config is not None
+        self.assertEqual(config.quantization_config.bits, 4)
+        self.assertEqual(len(checkpoint.manifest), 898)
+        self.assertEqual(
+            checkpoint.tensor_info(
+                "model.layers.0.self_attn.q_proj.qweight"
+            ).shape,
+            (128, 2048),
+        )
+        self.assertEqual(
+            checkpoint.tensor_info(
+                "model.layers.0.mlp.down_proj.qzeros"
+            ).shape,
+            (24, 128),
+        )
+        self.assertEqual(
+            checkpoint.tensor_info(
+                "model.layers.0.self_attn.q_proj.scales"
+            ).dtype,
+            "F16",
+        )
+
+
+@unittest.skipUnless(
     has_local_checkpoint(GRANITE_MODEL_DIR), "local Granite checkpoint is unavailable"
 )
 class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
@@ -595,7 +616,7 @@ class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
     def test_local_checkpoint_matches_all_218_tensor_specs(self) -> None:
         validate_checkpoint(self.checkpoint, self.config)
 
-        self.assertEqual(self.checkpoint.tensor_count, 218)
+        self.assertEqual(len(self.checkpoint.manifest), 218)
         self.assertEqual(
             sum(tensor.num_elements for tensor in self.checkpoint.manifest),
             self.config.total_parameter_estimate,

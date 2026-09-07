@@ -83,24 +83,33 @@ def valid_gptq_config() -> dict[str, object]:
 
 
 class Qwen3ConfigTests(unittest.TestCase):
-    def test_parses_supported_gptq_metadata(self) -> None:
-        raw = valid_config()
-        raw["torch_dtype"] = "float16"
-        raw["quantization_config"] = valid_gptq_config()
+    def test_parses_supported_gptq_bit_widths(self) -> None:
+        for bits in (4, 8):
+            with self.subTest(bits=bits):
+                raw = valid_config()
+                quantization = valid_gptq_config()
+                quantization["bits"] = bits
+                raw["quantization_config"] = quantization
 
-        config = Qwen3Config.from_dict(raw)
+                config = Qwen3Config.from_dict(raw)
 
-        self.assertIsInstance(
-            config.quantization_config, GPTQQuantizationConfig
-        )
-        assert config.quantization_config is not None
-        self.assertEqual(config.quantization_config.bits, 8)
-        self.assertEqual(config.quantization_config.group_size, 128)
+                self.assertIsInstance(
+                    config.quantization_config, GPTQQuantizationConfig
+                )
+                assert config.quantization_config is not None
+                self.assertEqual(config.quantization_config.bits, bits)
+                self.assertEqual(config.quantization_config.group_size, 128)
 
-    def test_gptq_requires_fp16_and_tied_embeddings(self) -> None:
-        raw = valid_config()
-        raw["quantization_config"] = valid_gptq_config()
-        with self.assertRaisesRegex(ConfigError, "torch_dtype='float16'"):
+    def test_gptq_accepts_16_bit_sources_and_requires_tied_embeddings(self) -> None:
+        for dtype in ("float16", "bfloat16"):
+            with self.subTest(dtype=dtype):
+                raw = valid_config()
+                raw["torch_dtype"] = dtype
+                raw["quantization_config"] = valid_gptq_config()
+                Qwen3Config.from_dict(raw)
+
+        raw["torch_dtype"] = "float32"
+        with self.assertRaisesRegex(ConfigError, "float16.*bfloat16"):
             Qwen3Config.from_dict(raw)
 
         raw["torch_dtype"] = "float16"
@@ -115,7 +124,7 @@ class Qwen3ConfigTests(unittest.TestCase):
 
     def test_rejects_unsupported_gptq_metadata(self) -> None:
         for field, value in (
-            ("bits", 4),
+            ("bits", 3),
             ("checkpoint_format", "marlin"),
             ("desc_act", True),
             ("group_size", 64),
@@ -134,6 +143,25 @@ class Qwen3ConfigTests(unittest.TestCase):
                     ConfigError, rf"quantization_config\.{field}"
                 ):
                     Qwen3Config.from_dict(raw)
+
+    def test_rejects_wrong_gptq_metadata_types(self) -> None:
+        raw = valid_config()
+        raw["torch_dtype"] = "float16"
+        quantization = valid_gptq_config()
+        raw["quantization_config"] = quantization
+
+        quantization["bits"] = True
+        with self.assertRaisesRegex(ConfigError, "bits must be int"):
+            Qwen3Config.from_dict(raw)
+
+        quantization["bits"] = 8
+        quantization["desc_act"] = 0
+        with self.assertRaisesRegex(ConfigError, "desc_act must be bool"):
+            Qwen3Config.from_dict(raw)
+
+        raw["quantization_config"] = []
+        with self.assertRaisesRegex(ConfigError, "must be an object"):
+            Qwen3Config.from_dict(raw)
 
     def test_shared_loader_dispatches_qwen_by_model_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

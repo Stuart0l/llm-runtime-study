@@ -7,7 +7,7 @@ from functools import reduce
 import json
 from operator import mul
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from safetensors import SafetensorError, safe_open
 import torch
@@ -76,11 +76,7 @@ class SafeTensorCheckpoint:
                 f"checkpoint must use the .safetensors extension: {self.path}"
             )
 
-        metadata, manifest = self._inspect_shard(self.path)
-        self._metadata = metadata
-        self._index_metadata: dict[str, Any] = {}
-        self._shard_paths = (self.path,)
-        self._is_sharded = False
+        manifest = self._inspect_shard(self.path)
         self._tensor_paths = {tensor.name: self.path for tensor in manifest}
         self._set_manifest(manifest)
 
@@ -127,20 +123,13 @@ class SafeTensorCheckpoint:
             model_dir / filename for filename in dict.fromkeys(weight_map.values())
         )
         manifest = []
-        shard_metadata = []
         for shard_path in shard_paths:
             if not shard_path.is_file():
                 raise CheckpointError(f"checkpoint shard does not exist: {shard_path}")
-            metadata, shard_manifest = cls._inspect_shard(shard_path)
-            shard_metadata.append(metadata)
-            manifest.extend(shard_manifest)
+            manifest.extend(cls._inspect_shard(shard_path))
 
         instance = cls.__new__(cls)
         instance.path = index_path
-        instance._metadata = shard_metadata[0]
-        instance._index_metadata = dict(raw.get("metadata", {}))
-        instance._shard_paths = shard_paths
-        instance._is_sharded = True
         instance._tensor_paths = {
             name: model_dir / filename for name, filename in weight_map.items()
         }
@@ -148,10 +137,9 @@ class SafeTensorCheckpoint:
         return instance
 
     @staticmethod
-    def _inspect_shard(path: Path) -> tuple[dict[str, str], list[TensorInfo]]:
+    def _inspect_shard(path: Path) -> list[TensorInfo]:
         try:
             with safe_open(path, framework="pt", device="cpu") as handle:
-                metadata = dict(handle.metadata() or {})
                 manifest = []
                 for name in handle.keys():
                     view = handle.get_slice(name)
@@ -171,7 +159,7 @@ class SafeTensorCheckpoint:
                             num_bytes=num_elements * _SAFETENSOR_DTYPE_BYTES[dtype],
                         )
                     )
-                return metadata, manifest
+                return manifest
         except SafetensorError as exc:
             raise CheckpointError(f"invalid Safetensors checkpoint: {path}") from exc
 
@@ -180,38 +168,8 @@ class SafeTensorCheckpoint:
         self._by_name = {tensor.name: tensor for tensor in self._manifest}
 
     @property
-    def metadata(self) -> Mapping[str, str]:
-        return self._metadata.copy()
-
-    @property
-    def index_metadata(self) -> Mapping[str, Any]:
-        """Metadata from the shard index, empty for a single-file checkpoint."""
-
-        return self._index_metadata.copy()
-
-    @property
-    def shard_paths(self) -> tuple[Path, ...]:
-        return self._shard_paths
-
-    @property
-    def is_sharded(self) -> bool:
-        """Whether this checkpoint was discovered through a shard index."""
-
-        return self._is_sharded
-
-    @property
     def manifest(self) -> tuple[TensorInfo, ...]:
         return self._manifest
-
-    @property
-    def tensor_count(self) -> int:
-        return len(self._manifest)
-
-    @property
-    def tensor_bytes(self) -> int:
-        """Logical bytes occupied by tensor payloads, excluding file headers."""
-
-        return sum(tensor.num_bytes for tensor in self._manifest)
 
     def tensor_info(self, name: str) -> TensorInfo:
         try:
@@ -375,7 +333,7 @@ def expected_qwen3_tensors(config: Qwen3Config) -> dict[str, TensorSpec]:
                         out_features=out_features,
                         bits=quantization.bits,
                         group_size=quantization.group_size,
-                        scale_dtype=dtype,
+                        scale_dtype="F16",
                         bias=has_bias,
                     )
                 )

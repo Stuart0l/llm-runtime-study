@@ -10,18 +10,26 @@ from mini_llm.checkpoint import SafeTensorCheckpoint
 from mini_llm.quantization import GPTQMarlinLinear
 
 
-MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8"
-_BYTE_SHIFTS = torch.arange(4, dtype=torch.int32) * 8
+MODEL_DIRS = (
+    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int4", 4),
+    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8", 8),
+)
 
 
-def _dequantize_gptq_int8(
-    qweight: torch.Tensor, qzeros: torch.Tensor, scales: torch.Tensor
+def _dequantize_gptq(
+    qweight: torch.Tensor,
+    qzeros: torch.Tensor,
+    scales: torch.Tensor,
+    bits: int,
 ) -> torch.Tensor:
     """Return the logical [in_features, out_features] GPTQ weight matrix."""
 
-    packed_weights = (qweight.unsqueeze(1) >> _BYTE_SHIFTS[None, :, None]) & 0xFF
-    packed_zeros = (qzeros.unsqueeze(-1) >> _BYTE_SHIFTS) & 0xFF
-    in_features = qweight.shape[0] * 4
+    pack_factor = 32 // bits
+    shifts = torch.arange(pack_factor, dtype=torch.int32) * bits
+    mask = (1 << bits) - 1
+    packed_weights = (qweight.unsqueeze(1) >> shifts[None, :, None]) & mask
+    packed_zeros = (qzeros.unsqueeze(-1) >> shifts) & mask
+    in_features = qweight.shape[0] * pack_factor
     out_features = qweight.shape[1]
     zeros = packed_zeros.reshape(-1, out_features) + 1
     weights = packed_weights.reshape(in_features, out_features)
@@ -42,7 +50,7 @@ class GPTQReferenceTests(unittest.TestCase):
         qzeros = torch.tensor([[0x09080706]], dtype=torch.int32)
         scales = torch.tensor([[0.5, 1.0, 2.0, 4.0]], dtype=torch.float16)
 
-        actual = _dequantize_gptq_int8(qweight, qzeros, scales)
+        actual = _dequantize_gptq(qweight, qzeros, scales, 8)
         expected = torch.tensor(
             [
                 [-3.5, 8.0, 46.0, 152.0],
@@ -56,42 +64,50 @@ class GPTQReferenceTests(unittest.TestCase):
         torch.testing.assert_close(actual, expected)
 
     @unittest.skipUnless(
-        torch.cuda.is_available() and MODEL_DIR.is_dir(),
+        torch.cuda.is_available() and all(path.is_dir() for path, _ in MODEL_DIRS),
         "requires CUDA and the real GPTQ checkpoint",
     )
     def test_fused_marlin_matches_explicit_dequantization(self) -> None:
-        checkpoint = SafeTensorCheckpoint.from_model_dir(MODEL_DIR)
         projections = (
             ("model.layers.0.self_attn.q_proj", 1024, 2048),
             ("model.layers.0.mlp.down_proj", 3072, 1024),
         )
 
-        for prefix, in_features, out_features in projections:
-            tensors = checkpoint.get_tensors(
-                f"{prefix}.{suffix}"
-                for suffix in ("qweight", "qzeros", "scales", "g_idx")
-            )
-            layer = GPTQMarlinLinear(in_features, out_features)
-            layer.load_state_dict(
-                {
-                    suffix: tensors[f"{prefix}.{suffix}"]
+        for model_dir, bits in MODEL_DIRS:
+            checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
+            for prefix, in_features, out_features in projections:
+                tensors = checkpoint.get_tensors(
+                    f"{prefix}.{suffix}"
                     for suffix in ("qweight", "qzeros", "scales", "g_idx")
-                },
-                strict=True,
-                assign=True,
-            )
-            inputs = torch.randn(3, in_features, dtype=torch.float16, device="cuda")
-            layer.prepare("cuda")
+                )
+                layer = GPTQMarlinLinear(
+                    in_features, out_features, bits=bits
+                )
+                layer.load_state_dict(
+                    {
+                        suffix: tensors[f"{prefix}.{suffix}"]
+                        for suffix in ("qweight", "qzeros", "scales", "g_idx")
+                    },
+                    strict=True,
+                    assign=True,
+                )
+                inputs = torch.randn(
+                    3, in_features, dtype=torch.float16, device="cuda"
+                )
+                layer.prepare("cuda")
 
-            actual = layer(inputs)
-            reference_weight = _dequantize_gptq_int8(
-                tensors[f"{prefix}.qweight"],
-                tensors[f"{prefix}.qzeros"],
-                tensors[f"{prefix}.scales"],
-            ).T.to("cuda")
-            expected = F.linear(inputs, reference_weight)
+                actual = layer(inputs)
+                reference_weight = _dequantize_gptq(
+                    tensors[f"{prefix}.qweight"],
+                    tensors[f"{prefix}.qzeros"],
+                    tensors[f"{prefix}.scales"],
+                    bits,
+                ).T.to("cuda")
+                expected = F.linear(inputs, reference_weight)
 
-            torch.testing.assert_close(actual, expected, rtol=0.01, atol=0.01)
+                torch.testing.assert_close(
+                    actual, expected, rtol=0.01, atol=0.01
+                )
 
 
 if __name__ == "__main__":

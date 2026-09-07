@@ -1,4 +1,4 @@
-"""GPTQ INT8 projections backed by vLLM's compiled Marlin operators."""
+"""GPTQ projections backed by vLLM's compiled Marlin operators."""
 
 from __future__ import annotations
 
@@ -12,7 +12,10 @@ from torch import nn
 
 
 _VLLM_VERSION = "0.28.0"
-_UINT8_BIAS_128 = (8 << 8) | (128 << 17) | (1 << 50)
+_GPTQ_TYPE_IDS = {
+    4: (4 << 8) | (8 << 17) | (1 << 50),
+    8: (8 << 8) | (128 << 17) | (1 << 50),
+}
 _SCALE_PERMUTATION = tuple(i + 8 * j for i in range(8) for j in range(8))
 
 
@@ -76,19 +79,22 @@ def validate_gptq_marlin_device(device: torch.device | str) -> torch.device:
 
 
 class GPTQMarlinLinear(nn.Module):
-    """Group-size-128 symmetric GPTQ INT8 linear projection for CUDA."""
+    """Group-size-128 symmetric GPTQ linear projection for CUDA."""
 
     def __init__(
         self,
         in_features: int,
         out_features: int,
         *,
+        bits: int,
         bias: bool = False,
         device: torch.device | str | None = None,
     ) -> None:
         super().__init__()
         if in_features <= 0 or out_features <= 0:
             raise ValueError("in_features and out_features must be positive")
+        if bits not in _GPTQ_TYPE_IDS:
+            raise ValueError(f"gptq-marlin supports 4 or 8 bits, got {bits}")
         if not (
             (out_features % 64 == 0 and in_features % 128 == 0)
             or (out_features % 128 == 0 and in_features % 64 == 0)
@@ -102,12 +108,24 @@ class GPTQMarlinLinear(nn.Module):
 
         self.in_features = in_features
         self.out_features = out_features
+        self.bits = bits
+        self.pack_factor = 32 // bits
         self.qweight = nn.Parameter(
-            torch.empty(in_features // 4, out_features, dtype=torch.int32, device=device),
+            torch.empty(
+                in_features // self.pack_factor,
+                out_features,
+                dtype=torch.int32,
+                device=device,
+            ),
             requires_grad=False,
         )
         self.qzeros = nn.Parameter(
-            torch.empty(in_features // 128, out_features // 4, dtype=torch.int32, device=device),
+            torch.empty(
+                in_features // 128,
+                out_features // self.pack_factor,
+                dtype=torch.int32,
+                device=device,
+            ),
             requires_grad=False,
         )
         self.scales = nn.Parameter(
@@ -148,7 +166,7 @@ class GPTQMarlinLinear(nn.Module):
             empty_permutation,
             self.in_features,
             self.out_features,
-            8,
+            self.bits,
             False,
         )
         permutation = torch.tensor(
@@ -197,7 +215,7 @@ class GPTQMarlinLinear(nn.Module):
             None,
             None,
             self.workspace,
-            _UINT8_BIAS_128,
+            _GPTQ_TYPE_IDS[self.bits],
             matrix.shape[0],
             self.out_features,
             self.in_features,
@@ -211,5 +229,5 @@ class GPTQMarlinLinear(nn.Module):
     def extra_repr(self) -> str:
         return (
             f"in_features={self.in_features}, out_features={self.out_features}, "
-            "bits=8, group_size=128, bias=False"
+            f"bits={self.bits}, group_size=128, bias=False"
         )
