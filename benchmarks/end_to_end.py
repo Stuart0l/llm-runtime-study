@@ -87,8 +87,6 @@ def run(
             if count > 0 and run.decode_seconds > 0
         ]
         decode_tpot = median(decode_tpots) if decode_tpots else None
-        cache = engine.model.cache
-        assert cache is not None
         rows.append(
             (
                 engine.device.type,
@@ -98,7 +96,7 @@ def run(
                 "n/a" if decode_tpot is None else f"{decode_tpot * 1_000:.2f} ms",
                 "n/a" if decode_tpot is None else f"{1 / decode_tpot:.2f}",
                 str(generated_tokens),
-                f"{cache.num_bytes / (1024**2):.2f} MiB",
+                f"{engine.last_cache_num_bytes / (1024**2):.2f} MiB",
             )
         )
     return rows

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from safetensors.torch import save_file
 import torch
+
+from mini_llm.dense_cache import DenseKVCacheManager
 from torch.nn import functional as F
 
 from mini_llm.config import GraniteMoeConfig
@@ -154,17 +156,20 @@ class GraniteMoeForCausalLMTests(unittest.TestCase):
         model = GraniteMoeForCausalLM(_tiny_config()).eval()
         input_ids = torch.tensor([[1, 4, 7, 9]])
         reference = model(input_ids)
-        model.setup_cache(capacity=input_ids.shape[1])
+        manager = DenseKVCacheManager(
+            model.config, input_ids.shape[1], dtype=torch.float32, device="cpu"
+        )
+        cache = manager.allocate(input_ids.shape[1])
 
-        prefill = model.prefill(input_ids[:, :2])
-        first_decode = model.decode(input_ids[:, 2:3])
-        second_decode = model.decode(input_ids[:, 3:4])
+        prefill = model.prefill(input_ids[:, :2], cache=cache)
+        first_decode = model.decode(input_ids[:, 2:3], cache=cache)
+        second_decode = model.decode(input_ids[:, 3:4], cache=cache)
 
         torch.testing.assert_close(prefill, reference[:, :2])
         torch.testing.assert_close(first_decode, reference[:, 2:3])
         torch.testing.assert_close(second_decode, reference[:, 3:4])
-        assert model.cache is not None
-        self.assertEqual(model.cache.length, 4)
+        self.assertEqual(cache.length, 4)
+        manager.release(cache)
 
     def test_model_applies_embedding_multiplier_before_decoder(self) -> None:
         torch.manual_seed(47)

@@ -199,6 +199,62 @@ class EngineTests(unittest.TestCase):
         load_tokenizer.assert_called_once_with("granite", model_config=config)
         load_model.assert_called_once_with("granite", model_config=config)
 
+    @patch("mini_llm.engine.PagedKVCachePool")
+    def test_paged_cache_is_the_default_runtime_backend(
+        self, paged_pool: MagicMock
+    ) -> None:
+        manager = MagicMock()
+        paged_pool.return_value = manager
+        engine = self._mock_engine()
+
+        self.assertIs(engine.cache_manager, manager)
+        paged_pool.assert_called_once_with(
+            engine.model.config,
+            256,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
+    @patch("mini_llm.engine.DenseKVCacheManager")
+    def test_dense_cache_backend_is_runtime_selectable(
+        self, dense_manager: MagicMock
+    ) -> None:
+        manager = MagicMock()
+        dense_manager.return_value = manager
+        engine = self._mock_engine()
+        engine.cache_backend = "dense"
+
+        self.assertIs(engine.cache_manager, manager)
+        dense_manager.assert_called_once_with(
+            engine.model.config,
+            256,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
+    def test_rejects_unknown_cache_backend(self) -> None:
+        with self.assertRaisesRegex(EngineError, "cache backend"):
+            Engine(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                device=torch.device("cpu"),
+                dtype=torch.float32,
+                max_seq_len=16,
+                load_seconds=0.0,
+                cache_backend="unknown",  # type: ignore[arg-type]
+            )
+
+    def test_to_rejects_moving_with_an_active_request_cache(self) -> None:
+        engine = self._mock_engine()
+        manager = MagicMock()
+        manager.active_sequences = 1
+        engine._cache_manager = manager
+
+        with self.assertRaisesRegex(EngineError, "request caches are active"):
+            engine.to(dtype="float16")
+
+        engine.model.to.assert_not_called()
+
     @patch("mini_llm.engine.generate_text")
     def test_generate_forwards_complete_history_and_sampling(
         self, generate_text: MagicMock
@@ -214,6 +270,8 @@ class EngineTests(unittest.TestCase):
             max_seq_len=256,
             load_seconds=1.0,
         )
+        cache_manager = MagicMock()
+        engine._cache_manager = cache_manager
         sampling = SamplingConfig(temperature=0.7, top_k=20, seed=4)
         messages = [
             ChatMessage("system", "Be concise."),
@@ -239,6 +297,7 @@ class EngineTests(unittest.TestCase):
             enable_thinking=True,
             max_seq_len=256,
             synchronize=engine.synchronize,
+            cache_manager=cache_manager,
         )
 
     @patch("mini_llm.engine.synchronize_device")
@@ -339,8 +398,8 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         self.assertEqual(
             engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
         )
-        self.assertIsNotNone(engine.model.cache)
-        self.assertEqual(engine.model.cache.device.type, "mps")
+        self.assertEqual(engine.cache_manager.active_sequences, 0)
+        self.assertEqual(engine.cache_manager.device.type, "mps")
 
     @unittest.skipUnless(
         torch.backends.mps.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
@@ -402,12 +461,13 @@ class MPSEngineIntegrationTests(unittest.TestCase):
             QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
         )
         list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
-        self.assertIsNotNone(engine.model.cache)
+        old_manager = engine.cache_manager
+        self.assertEqual(old_manager.active_sequences, 0)
 
         result = engine.to(device="mps")
 
         self.assertIs(result, engine)
-        self.assertIsNone(engine.model.cache)
+        self.assertIsNone(engine._cache_manager)
         self.assertEqual(engine.device, torch.device("mps"))
         self.assertEqual(engine.dtype, torch.float16)
         self.assertEqual(engine.model.input_device.type, "mps")
@@ -441,8 +501,8 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
         self.assertEqual(
             engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
         )
-        self.assertIsNotNone(engine.model.cache)
-        self.assertEqual(engine.model.cache.device.type, "cuda")
+        self.assertEqual(engine.cache_manager.active_sequences, 0)
+        self.assertEqual(engine.cache_manager.device.type, "cuda")
 
     @unittest.skipUnless(
         torch.cuda.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
@@ -467,12 +527,13 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
             QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
         )
         list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
-        self.assertIsNotNone(engine.model.cache)
+        old_manager = engine.cache_manager
+        self.assertEqual(old_manager.active_sequences, 0)
 
         result = engine.to(device="cuda")
 
         self.assertIs(result, engine)
-        self.assertIsNone(engine.model.cache)
+        self.assertIsNone(engine._cache_manager)
         self.assertEqual(engine.device, torch.device("cuda"))
         self.assertEqual(engine.dtype, torch.float16)
         self.assertEqual(engine.model.input_device.type, "cuda")

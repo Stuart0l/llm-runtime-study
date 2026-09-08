@@ -11,6 +11,7 @@ from pathlib import Path
 import torch
 
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
+from mini_llm.paged_cache import PagedKVCachePool
 
 
 HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None
@@ -51,17 +52,27 @@ def run_mini_runtime(
     *,
     generated_tokens: int,
 ) -> InferenceTrace:
-    model.setup_cache(input_ids.shape[1] + generated_tokens)
-    with torch.inference_mode():
-        full_logits = model(input_ids).float().clone()
-        prefill_logits = model.prefill(input_ids).float().clone()
-        token_ids = [int(prefill_logits[0, -1].argmax())]
-        decode_logits = []
-        for _ in range(generated_tokens - 1):
-            token_input = torch.tensor([[token_ids[-1]]], dtype=torch.long)
-            logits = model.decode(token_input).float().clone()
-            decode_logits.append(logits)
-            token_ids.append(int(logits[0, -1].argmax()))
+    capacity = input_ids.shape[1] + generated_tokens
+    parameter = model.model.embed_tokens.weight
+    manager = PagedKVCachePool(
+        model.config, capacity, dtype=parameter.dtype, device=parameter.device
+    )
+    cache = manager.allocate(capacity)
+    try:
+        with torch.inference_mode():
+            full_logits = model(input_ids).float().clone()
+            prefill_logits = model.prefill(input_ids, cache=cache).float().clone()
+            token_ids = [int(prefill_logits[0, -1].argmax())]
+            decode_logits = []
+            for _ in range(generated_tokens - 1):
+                token_input = torch.tensor(
+                    [[token_ids[-1]]], dtype=torch.long, device=model.input_device
+                )
+                logits = model.decode(token_input, cache=cache).float().clone()
+                decode_logits.append(logits)
+                token_ids.append(int(logits[0, -1].argmax()))
+    finally:
+        manager.release(cache)
     return InferenceTrace(
         full_logits,
         prefill_logits,

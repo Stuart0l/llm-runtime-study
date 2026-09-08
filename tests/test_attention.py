@@ -6,7 +6,7 @@ import unittest
 import torch
 from torch.nn import functional as F
 
-from mini_llm.cache import LayerKVCache
+from mini_llm.dense_cache import DenseLayerKVCache
 from mini_llm.nn import GraniteAttention, Qwen3Attention, repeat_kv_heads
 
 
@@ -213,7 +213,7 @@ class GraniteAttentionTests(unittest.TestCase):
         ).eval()
         inputs = torch.randn(1, 3, 4)
         cosine, sine = _identity_rope_tables(1, 3, 2)
-        cache = LayerKVCache(
+        cache = DenseLayerKVCache(
             keys=torch.empty(1, 1, 3, 2),
             values=torch.empty(1, 1, 3, 2),
         )

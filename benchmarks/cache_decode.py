@@ -33,16 +33,20 @@ UNCACHED_MAX_REQUESTED_PROMPT_TOKENS = 32
 def _forced_tokens(
     engine: Engine, prompt: torch.Tensor, decode_tokens: int
 ) -> list[int]:
-    engine.model.setup_cache(prompt.shape[1] + decode_tokens)
-    logits = engine.model.prefill(prompt)
-    tokens: list[int] = []
-    for _ in range(decode_tokens):
-        token_id = int(logits[0, -1].argmax())
-        tokens.append(token_id)
-        logits = engine.model.decode(
-            torch.tensor([[token_id]], dtype=torch.long, device=engine.device)
-        )
-    return tokens
+    cache = engine.allocate_cache(prompt.shape[1] + decode_tokens)
+    try:
+        logits = engine.model.prefill(prompt, cache=cache)
+        tokens: list[int] = []
+        for _ in range(decode_tokens):
+            token_id = int(logits[0, -1].argmax())
+            tokens.append(token_id)
+            logits = engine.model.decode(
+                torch.tensor([[token_id]], dtype=torch.long, device=engine.device),
+                cache=cache,
+            )
+        return tokens
+    finally:
+        engine.release_cache(cache)
 
 
 def run(
@@ -78,15 +82,15 @@ def run(
                 )
                 for index in range(decode_tokens)
             ]
-            engine.model.setup_cache(case.actual_tokens + decode_tokens)
+            cache = engine.allocate_cache(case.actual_tokens + decode_tokens)
 
             def prepare_cached() -> None:
-                engine.model.prefill(prompt)
+                engine.model.prefill(prompt, cache=cache)
 
             def cached_decode() -> torch.Tensor:
                 cached_logits = None
                 for token_input in token_inputs:
-                    cached_logits = engine.model.decode(token_input)
+                    cached_logits = engine.model.decode(token_input, cache=cache)
                 assert cached_logits is not None
                 # Decode returns only one position, so retaining the final
                 # measured logits is cheap and avoids rerunning cached decode
@@ -109,9 +113,6 @@ def run(
                 capture=lambda logits: logits[0, -1].float(),
             )
             cached_tpot = cached.median_seconds / decode_tokens
-            cache = engine.model.cache
-            assert cache is not None
-
             uncached = measure(
                 uncached_decode,
                 synchronize=engine.synchronize,
@@ -141,4 +142,5 @@ def run(
                     "yes" if next_equal else "no",
                 )
             )
+            engine.release_cache(cache)
     return rows

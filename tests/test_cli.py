@@ -110,9 +110,8 @@ class CLITests(unittest.TestCase):
         engine.device = torch.device("cpu")
         engine.dtype = torch.float32
         engine.load_seconds = 1.25
-        engine.model.cache = SimpleNamespace(
-            num_bytes=2 * 1024 * 1024, capacity=16
-        )
+        engine.last_cache_num_bytes = 2 * 1024 * 1024
+        engine.last_cache_capacity = 16
         engine.generate.return_value = iter(
             [
                 GenerationEvent(

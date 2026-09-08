@@ -7,6 +7,7 @@ from typing import Literal, Protocol, Sequence
 
 import torch
 
+from mini_llm.cache import SequenceKVCache
 from mini_llm.config import DecoderConfig
 
 
@@ -43,11 +44,13 @@ class RuntimeCausalLM(Protocol):
     @property
     def input_device(self) -> torch.device: ...
 
-    def setup_cache(self, capacity: int) -> None: ...
+    def prefill(
+        self, input_ids: torch.Tensor, *, cache: SequenceKVCache
+    ) -> torch.Tensor: ...
 
-    def prefill(self, input_ids: torch.Tensor) -> torch.Tensor: ...
-
-    def decode(self, input_ids: torch.Tensor) -> torch.Tensor: ...
+    def decode(
+        self, input_ids: torch.Tensor, *, cache: SequenceKVCache
+    ) -> torch.Tensor: ...
 
     def requires_grad_(self, requires_grad: bool = True) -> "RuntimeCausalLM": ...
 

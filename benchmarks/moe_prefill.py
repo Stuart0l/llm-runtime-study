@@ -40,10 +40,10 @@ def run(
     with torch.inference_mode():
         for case in cases:
             prompt = input_tensor(engine, case)
-            engine.model.setup_cache(case.actual_tokens)
+            cache = engine.allocate_cache(case.actual_tokens)
 
             def prefill() -> torch.Tensor:
-                return engine.model.prefill(prompt)
+                return engine.model.prefill(prompt, cache=cache)
 
             timings = measure(
                 prefill,
@@ -83,4 +83,5 @@ def run(
                     next_equal,
                 )
             )
+            engine.release_cache(cache)
     return rows

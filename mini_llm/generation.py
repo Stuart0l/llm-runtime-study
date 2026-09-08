@@ -8,6 +8,7 @@ from typing import Callable, Iterator, Literal, Sequence, TypeVar
 
 import torch
 
+from mini_llm.cache import KVCacheManager
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.sampling import SamplingConfig, make_generator, sample_next_token
 
@@ -82,6 +83,7 @@ def generate(
     enable_thinking: bool = False,
     max_seq_len: int | None = None,
     synchronize: Callable[[], None] | None = None,
+    cache_manager: KVCacheManager,
 ) -> Iterator[GenerationEvent]:
     """Format complete chat history and return its generation iterator.
 
@@ -133,47 +135,52 @@ def generate(
         prompt_tokens = torch.tensor(
             [prompt_token_ids], dtype=torch.long, device=device
         )
-        model.setup_cache(prompt_length + output_limit)
+        cache = cache_manager.allocate(prompt_length + output_limit)
         random_generator = make_generator(sampling.seed)
         eos_token_ids = set(model.config.eos_token_ids)
         text_decoder = IncrementalTextDecoder(tokenizer)
 
-        with torch.inference_mode():
-            logits, model_seconds = _run_model_call(
-                lambda: model.prefill(prompt_tokens), synchronize
-            )
-        for token_index in range(output_limit):
-            token_id = sample_next_token(
-                logits[0, -1], sampling, generator=random_generator
-            )
-            text_delta = text_decoder.add(token_id)
-
-            finish_reason: FinishReason | None = None
-            if token_id in eos_token_ids:
-                finish_reason = "eos"
-            elif token_index + 1 == output_limit:
-                finish_reason = (
-                    "context_length"
-                    if output_limit < max_new_tokens
-                    else "max_new_tokens"
-                )
-
-            yield GenerationEvent(
-                token_id=token_id,
-                token_index=token_index,
-                text_delta=text_delta,
-                text=text_decoder.text,
-                finish_reason=finish_reason,
-                model_seconds=model_seconds,
-                prompt_token_count=prompt_length if token_index == 0 else None,
-            )
-            if finish_reason is not None:
-                return
-
-            token_input = torch.tensor([[token_id]], dtype=torch.long, device=device)
+        try:
             with torch.inference_mode():
                 logits, model_seconds = _run_model_call(
-                    lambda: model.decode(token_input), synchronize
+                    lambda: model.prefill(prompt_tokens, cache=cache), synchronize
                 )
+            for token_index in range(output_limit):
+                token_id = sample_next_token(
+                    logits[0, -1], sampling, generator=random_generator
+                )
+                text_delta = text_decoder.add(token_id)
+
+                finish_reason: FinishReason | None = None
+                if token_id in eos_token_ids:
+                    finish_reason = "eos"
+                elif token_index + 1 == output_limit:
+                    finish_reason = (
+                        "context_length"
+                        if output_limit < max_new_tokens
+                        else "max_new_tokens"
+                    )
+
+                yield GenerationEvent(
+                    token_id=token_id,
+                    token_index=token_index,
+                    text_delta=text_delta,
+                    text=text_decoder.text,
+                    finish_reason=finish_reason,
+                    model_seconds=model_seconds,
+                    prompt_token_count=prompt_length if token_index == 0 else None,
+                )
+                if finish_reason is not None:
+                    return
+
+                token_input = torch.tensor(
+                    [[token_id]], dtype=torch.long, device=device
+                )
+                with torch.inference_mode():
+                    logits, model_seconds = _run_model_call(
+                        lambda: model.decode(token_input, cache=cache), synchronize
+                    )
+        finally:
+            cache_manager.release(cache)
 
     return iterate()

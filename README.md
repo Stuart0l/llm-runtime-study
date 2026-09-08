@@ -14,7 +14,7 @@ The runtime currently supports:
 | Tokenization | Local `tokenizer.json` through `tokenizers` |
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
 | Execution | CPU, NVIDIA CUDA, and Apple MPS; batch size one; one active request |
-| Cache | Preallocated dense KV cache with prefill and single-token decode |
+| Cache | Runtime-owned request caches; paged by default, dense optional |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
 ## Setup
@@ -91,8 +91,8 @@ python -m mini_llm \
 ```
 
 Interactive mode loads the model once and accepts independent prompts until
-`/quit`, `/exit`, or Control-D. Each prompt starts a fresh chat and resets the
-logical KV-cache length; conversation history is not carried between inputs.
+`/quit`, `/exit`, or Control-D. Each prompt is independent; conversation
+history is not carried between inputs.
 
 ### Important CLI options
 
@@ -124,6 +124,7 @@ engine = Engine.from_model_dir(
     device="auto",
     dtype="auto",
     max_seq_len=4096,
+    cache_backend="paged",  # or "dense"
 )
 
 for event in engine.generate(
@@ -145,8 +146,8 @@ engine.to(device="cuda", dtype="float16")
 ```
 
 The Python API also accepts indexed CUDA devices such as `cuda:0`. Moving the
-model invalidates its device-specific KV cache and rebuilds RoPE's
-derived FP32 frequencies. Dtype conversion changes the resident weights;
+model rebuilds device-specific runtime state and RoPE's derived FP32
+frequencies. Dtype conversion changes the resident weights;
 widening after a lossy downcast does not restore the original precision.
 
 ### HTTP server
@@ -161,10 +162,10 @@ python -m mini_llm.server \
   --max-seq-len 4096
 ```
 
-The server loads one model before accepting requests and always uses one worker
-because requests share a mutable KV cache. Concurrent valid requests wait and
-execute one at a time. The served model name defaults to the model-directory
-name and can be changed with `--served-model-name NAME`.
+The server loads one model before accepting requests and always uses one worker.
+Model execution is currently serialized even though KV state is request-owned;
+continuous batching is a later milestone. The served model name defaults to the
+model-directory name and can be changed with `--served-model-name NAME`.
 
 Send a request:
 
@@ -241,7 +242,23 @@ most of the batching speedup while reducing backend-specific route divergence.
 
 ### KV cache
 
-Each layer owns preallocated key and value tensors:
+The runtime owns cache allocation. Models receive an explicit cache and depend
+only on the protocols in `mini_llm/cache.py`; implementations live in
+`mini_llm/dense_cache.py` and `mini_llm/paged_cache.py`.
+
+The default paged backend stores each layer's keys and values as:
+
+```text
+[blocks, 16, num_kv_heads, head_dim]
+```
+
+A request handle contains its logical length, capacity, and ordered block
+table. A physical block ID selects the corresponding K/V block in every layer.
+The reference backend gathers pages into the ordinary SDPA layout.
+
+![Paged KV-cache layout](img/paged-kv-cache.png)
+
+The optional dense backend allocates contiguous per-request tensors:
 
 ```text
 [1, num_kv_heads, capacity, head_dim]
@@ -255,9 +272,9 @@ expands them to query-head count only during attention.
 cache bytes = layers × 2(K,V) × KV heads × capacity × head_dim × bytes/value
 ```
 
-Resetting changes only logical length, allowing the same allocation to serve a
-later request. Moving the engine to another device or dtype releases the old
-cache because its storage is no longer compatible.
+Both implementations expose the same append, reset, rollback, length, and
+capacity operations. The runtime releases request caches when generation ends
+or fails.
 
 ## Benchmarks
 
@@ -334,7 +351,8 @@ python -m examples.generation_demo models/qwen3-0.6b
 
 - One active request and batch size one.
 - Synchronous, non-streaming HTTP responses.
-- Dense KV cache rather than paged attention.
-- No quantization or sliding-window eviction.
+- Reference gather-plus-SDPA paged attention rather than an optimized paged
+  CUDA operator.
+- No prefix sharing, sliding-window eviction, or CPU cache offload.
 - No concurrent batching.
 - Only Qwen3 and Granite 3.1 MoE architectures.

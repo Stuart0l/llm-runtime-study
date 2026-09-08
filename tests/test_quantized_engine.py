@@ -182,8 +182,8 @@ class QuantizedEngineTests(unittest.TestCase):
                     self.assertEqual(engine.device.type, "cuda")
                     self.assertEqual(engine.dtype, torch.float16)
                     self.assertTrue(events)
-                    self.assertIsNotNone(engine.model.cache)
-                    self.assertEqual(engine.model.cache.device.type, "cuda")
+                    self.assertEqual(engine.cache_manager.active_sequences, 0)
+                    self.assertEqual(engine.cache_manager.device.type, "cuda")
                 finally:
                     del engine
                     gc.collect()

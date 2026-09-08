@@ -61,7 +61,6 @@ class CacheDecodeBenchmarkTests(unittest.TestCase):
         model = MagicMock()
         model.prefill.return_value = logits
         model.decode.return_value = logits
-        model.cache = SimpleNamespace(num_bytes=1024)
         engine = SimpleNamespace(
             model=model,
             device=torch.device("cpu"),

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import time
-from typing import Iterator, Sequence
+from typing import Iterator, Literal, Sequence
 
 import torch
 
+from mini_llm.cache import KVCacheManager, SequenceKVCache
+from mini_llm.dense_cache import DenseKVCacheManager
 from mini_llm.config import DecoderConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
 from mini_llm.model_loader import load_model
+from mini_llm.paged_cache import PagedKVCachePool
 from mini_llm.quantization import validate_gptq_marlin_device
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import load_tokenizer
@@ -20,6 +23,9 @@ from mini_llm.tokenizer import load_tokenizer
 
 class EngineError(ValueError):
     """Raised when an execution device, dtype, or context is unsupported."""
+
+
+CacheBackend = Literal["paged", "dense"]
 
 
 _DTYPES = {
@@ -139,6 +145,17 @@ class Engine:
     max_seq_len: int
     load_seconds: float
     quantization: str = "dense"
+    cache_backend: CacheBackend = "paged"
+    _cache_manager: KVCacheManager | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        if self.cache_backend not in ("paged", "dense"):
+            raise EngineError(
+                f"unsupported cache backend {self.cache_backend!r}; "
+                "expected 'paged' or 'dense'"
+            )
 
     @classmethod
     def from_model_dir(
@@ -148,6 +165,7 @@ class Engine:
         device: str | torch.device = "auto",
         dtype: str | torch.dtype = "auto",
         max_seq_len: int = 4096,
+        cache_backend: CacheBackend = "paged",
     ) -> "Engine":
         """Select, load, and place one supported checkpoint for inference."""
 
@@ -172,6 +190,7 @@ class Engine:
             max_seq_len=max_seq_len,
             load_seconds=0.0,
             quantization=selected_quantization,
+            cache_backend=cache_backend,
         )
         engine.to(device=selected_device, dtype=selected_dtype)
         load_seconds = time.perf_counter() - started
@@ -197,7 +216,41 @@ class Engine:
             enable_thinking=enable_thinking,
             max_seq_len=self.max_seq_len,
             synchronize=self.synchronize,
+            cache_manager=self._ensure_cache_manager(),
         )
+
+    def _ensure_cache_manager(self) -> KVCacheManager:
+        if self._cache_manager is None:
+            manager_type = (
+                PagedKVCachePool
+                if self.cache_backend == "paged"
+                else DenseKVCacheManager
+            )
+            self._cache_manager = manager_type(
+                self.model.config,
+                self.max_seq_len,
+                dtype=self.dtype,
+                device=self.device,
+            )
+        return self._cache_manager
+
+    @property
+    def cache_manager(self) -> KVCacheManager:
+        return self._ensure_cache_manager()
+
+    @property
+    def last_cache_num_bytes(self) -> int:
+        return self._ensure_cache_manager().last_allocation_num_bytes
+
+    @property
+    def last_cache_capacity(self) -> int:
+        return self._ensure_cache_manager().last_allocation_capacity
+
+    def allocate_cache(self, capacity: int) -> SequenceKVCache:
+        return self._ensure_cache_manager().allocate(capacity)
+
+    def release_cache(self, cache: SequenceKVCache) -> None:
+        self._ensure_cache_manager().release(cache)
 
     def to(
         self,
@@ -225,9 +278,11 @@ class Engine:
         _validate_quantized_placement(
             self.quantization, selected_device, selected_dtype
         )
+        if self._cache_manager is not None and self._cache_manager.active_sequences:
+            raise EngineError("cannot move an engine while request caches are active")
 
-        # CausalLMBase._apply clears the device- and dtype-specific KV cache.
-        # Module.to preserves eval mode and requires_grad flags.
+        # Module.to preserves eval mode and requires_grad flags. Cache managers
+        # are runtime-owned and rebuilt lazily for the new placement.
         self.model.to(device=selected_device, dtype=selected_dtype)
         if self.quantization == "gptq-marlin":
             self.model.prepare_quantized(selected_device)
@@ -238,6 +293,7 @@ class Engine:
         synchronize_device(selected_device)
         self.device = selected_device
         self.dtype = selected_dtype
+        self._cache_manager = None
         return self
 
     def synchronize(self) -> None:

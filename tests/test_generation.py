@@ -7,7 +7,7 @@ import unittest
 import torch
 from torch import nn
 
-from mini_llm.generation import GenerationError, generate
+from mini_llm.generation import GenerationError, generate as generate_text
 from mini_llm.sampling import (
     SamplingConfig,
     SamplingError,
@@ -115,6 +115,20 @@ class _SplitUnicodeTokenizer:
         return ""
 
 
+class _FakeCacheManager:
+    def __init__(self) -> None:
+        self.allocated_capacities: list[int] = []
+        self.released: list[object] = []
+
+    def allocate(self, capacity: int) -> object:
+        cache = SimpleNamespace(capacity=capacity)
+        self.allocated_capacities.append(capacity)
+        return cache
+
+    def release(self, cache: object) -> None:
+        self.released.append(cache)
+
+
 class _FakeModel(nn.Module):
     def __init__(self, next_tokens: list[int], *, context_limit: int = 8) -> None:
         super().__init__()
@@ -130,27 +144,34 @@ class _FakeModel(nn.Module):
         self.next_tokens = next_tokens
         self.prefill_calls = 0
         self.decode_inputs: list[int] = []
-        self.cache_capacity: int | None = None
+        self.cache_manager = _FakeCacheManager()
 
     @property
     def input_device(self) -> torch.device:
         return self.anchor.device
-
-    def setup_cache(self, capacity: int) -> None:
-        self.cache_capacity = capacity
 
     def _logits(self, next_token: int, sequence_length: int) -> torch.Tensor:
         logits = torch.full((1, sequence_length, 5), -10.0)
         logits[0, -1, next_token] = 10.0
         return logits
 
-    def prefill(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def prefill(self, input_ids: torch.Tensor, *, cache: object) -> torch.Tensor:
         self.prefill_calls += 1
         return self._logits(self.next_tokens[0], input_ids.shape[1])
 
-    def decode(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def decode(self, input_ids: torch.Tensor, *, cache: object) -> torch.Tensor:
         self.decode_inputs.append(int(input_ids.item()))
         return self._logits(self.next_tokens[len(self.decode_inputs)], 1)
+
+
+def generate(model, tokenizer, messages, **kwargs):
+    return generate_text(
+        model,
+        tokenizer,
+        messages,
+        cache_manager=model.cache_manager,
+        **kwargs,
+    )
 
 
 class GenerationTests(unittest.TestCase):
@@ -214,7 +235,8 @@ class GenerationTests(unittest.TestCase):
 
         self.assertEqual(model.prefill_calls, 1)
         self.assertEqual(model.decode_inputs, [2, 3])
-        self.assertEqual(model.cache_capacity, 8)
+        self.assertEqual(model.cache_manager.allocated_capacities, [8])
+        self.assertEqual(len(model.cache_manager.released), 1)
         self.assertEqual([event.token_id for event in events], [2, 3, 4])
         self.assertEqual([event.text_delta for event in events], ["Hello", " world", ""])
         self.assertEqual(events[-1].text, "Hello world")
@@ -269,6 +291,36 @@ class GenerationTests(unittest.TestCase):
 
         self.assertFalse(torch.is_inference_mode_enabled())
 
+    def test_closing_stream_releases_request_cache(self) -> None:
+        model = _FakeModel([2, 3, 4])
+        stream = generate(
+            model,
+            _FakeTokenizer(prompt_ids=[0]),
+            [ChatMessage("user", "question")],
+            max_new_tokens=3,
+        )
+
+        next(stream)
+        self.assertEqual(model.cache_manager.released, [])
+        stream.close()
+
+        self.assertEqual(len(model.cache_manager.released), 1)
+
+    def test_model_failure_releases_request_cache(self) -> None:
+        model = _FakeModel([2])
+        model.prefill = MagicMock(side_effect=RuntimeError("prefill failed"))
+        stream = generate(
+            model,
+            _FakeTokenizer(prompt_ids=[0]),
+            [ChatMessage("user", "question")],
+            max_new_tokens=1,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "prefill failed"):
+            list(stream)
+
+        self.assertEqual(len(model.cache_manager.released), 1)
+
     def test_synchronized_model_timings_are_attached_to_events(self) -> None:
         synchronize = MagicMock()
         with patch(
@@ -304,7 +356,8 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].token_id, 2)
         self.assertEqual(events[0].finish_reason, "context_length")
-        self.assertEqual(model.cache_capacity, 3)
+        self.assertEqual(model.cache_manager.allocated_capacities, [3])
+        self.assertEqual(len(model.cache_manager.released), 1)
         self.assertEqual(model.decode_inputs, [])
 
     def test_full_prompt_returns_terminal_context_event_without_forward(self) -> None:

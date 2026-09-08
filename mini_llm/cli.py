@@ -217,10 +217,12 @@ def _print_metrics(
     output: TextIO,
     include_load_time: bool = True,
 ) -> None:
-    cache = engine.model.cache
     cache_text = "not allocated"
-    if cache is not None:
-        cache_text = f"{cache.num_bytes / (1024**2):.2f} MiB ({cache.capacity} positions)"
+    if engine.last_cache_capacity:
+        cache_text = (
+            f"{engine.last_cache_num_bytes / (1024**2):.2f} MiB "
+            f"({engine.last_cache_capacity} positions)"
+        )
     decode_token_count = max(0, metrics.generated_tokens - 1)
     decode_rate = (
         decode_token_count / metrics.decode_seconds
