@@ -242,39 +242,14 @@ most of the batching speedup while reducing backend-specific route divergence.
 
 ### KV cache
 
-The runtime owns cache allocation. Models receive an explicit cache and depend
-only on the protocols in `mini_llm/cache/contracts.py`; implementations live
-in `mini_llm/cache/dense.py` and `mini_llm/cache/paged.py`.
+The runtime owns request caches and passes them to models through one
+backend-neutral interface. The default paged backend stores 16-token K/V
+blocks in a global pool and gives each request one ordered block table shared
+across decoder layers; a contiguous per-request dense backend remains
+available for comparison.
 
-The default paged backend stores each layer's keys and values as:
-
-```text
-[blocks, 16, num_kv_heads, head_dim]
-```
-
-A request handle contains its logical length, capacity, and ordered block
-table. A physical block ID selects the corresponding K/V block in every layer.
-The reference backend gathers pages into the ordinary SDPA layout.
-
-![Paged KV-cache layout](img/paged-kv-cache.png)
-
-The optional dense backend allocates contiguous per-request tensors:
-
-```text
-[1, num_kv_heads, capacity, head_dim]
-```
-
-Qwen3-0.6B uses `[1, 8, capacity, 128]`; Granite uses
-`[1, 8, capacity, 64]`. The cache stores the original GQA key/value heads and
-expands them to query-head count only during attention.
-
-```text
-cache bytes = layers × 2(K,V) × KV heads × capacity × head_dim × bytes/value
-```
-
-Both implementations expose the same append, reset, rollback, length, and
-capacity operations. The runtime releases request caches when generation ends
-or fails.
+See [Paged KV-cache](doc/paged-cache.md) for implementation details, the cache
+layout, and CUDA benchmark results.
 
 ## Benchmarks
 
