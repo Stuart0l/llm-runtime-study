@@ -9,8 +9,9 @@ from typing import Callable, Iterator, Literal, Sequence, TypeVar
 import torch
 
 from mini_llm.cache import KVCacheManager
-from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
+from mini_llm.model.contracts import RuntimeCausalLM
 from mini_llm.sampling import SamplingConfig, make_generator, sample_next_token
+from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer
 
 
 class GenerationError(ValueError):

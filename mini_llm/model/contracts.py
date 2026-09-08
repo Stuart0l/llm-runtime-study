@@ -1,39 +1,13 @@
-"""Small runtime contracts shared by supported model architectures."""
+"""Protocol required from causal language models by the runtime."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Protocol, Sequence
+from typing import Protocol
 
 import torch
 
 from mini_llm.cache import SequenceKVCache
 from mini_llm.config import DecoderConfig
-
-
-@dataclass(frozen=True, slots=True)
-class ChatMessage:
-    """One textual message accepted by the generation runtime."""
-
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-class RuntimeTokenizer(Protocol):
-    """Tokenizer operations required by architecture-neutral generation."""
-
-    def encode(self, text: str) -> list[int]: ...
-
-    def decode(
-        self, token_ids: Sequence[int], *, skip_special_tokens: bool = False
-    ) -> str: ...
-
-    def format_chat(
-        self,
-        messages: Sequence[ChatMessage],
-        *,
-        enable_thinking: bool = False,
-    ) -> str: ...
 
 
 class RuntimeCausalLM(Protocol):

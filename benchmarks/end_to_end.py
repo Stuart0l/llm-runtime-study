@@ -8,7 +8,7 @@ import time
 from typing import Sequence
 
 from mini_llm.engine import Engine
-from mini_llm.interfaces import ChatMessage
+from mini_llm.tokenizer import ChatMessage
 from mini_llm.sampling import SamplingConfig
 
 from benchmarks.common import PromptCase

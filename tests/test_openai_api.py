@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from mini_llm.openai_api import (
+from mini_llm.serving.openai_api import (
     ChatCompletionRequest,
     OpenAIRequestError,
     create_chat_completion_response,

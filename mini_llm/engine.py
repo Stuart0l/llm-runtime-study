@@ -10,15 +10,15 @@ from typing import Iterator, Literal, Sequence
 import torch
 
 from mini_llm.cache import KVCacheManager, SequenceKVCache
-from mini_llm.dense_cache import DenseKVCacheManager
+from mini_llm.cache.dense import DenseKVCacheManager
+from mini_llm.cache.paged import PagedKVCachePool
 from mini_llm.config import DecoderConfig, load_config
 from mini_llm.generation import GenerationEvent, generate as generate_text
-from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
-from mini_llm.model_loader import load_model
-from mini_llm.paged_cache import PagedKVCachePool
+from mini_llm.model.contracts import RuntimeCausalLM
+from mini_llm.model.loader import load_model
 from mini_llm.quantization import validate_gptq_marlin_device
 from mini_llm.sampling import SamplingConfig
-from mini_llm.tokenizer import load_tokenizer
+from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer, load_tokenizer
 
 
 class EngineError(ValueError):

@@ -5,9 +5,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
-from typing import Sequence
+from typing import Literal, Sequence
 
-from mini_llm.interfaces import ChatMessage
+
+@dataclass(frozen=True, slots=True)
+class ChatMessage:
+    """One textual message accepted by the generation runtime."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str
 
 
 class TokenizerError(ValueError):

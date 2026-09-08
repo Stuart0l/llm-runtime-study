@@ -12,7 +12,7 @@ import torch
 from mini_llm.checkpoint import expected_qwen3_tensors
 from mini_llm.config import Qwen3Config
 from mini_llm.quantization import GPTQMarlinLinear
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.model.qwen import Qwen3ForCausalLM
 
 
 MODEL_DIRS = (

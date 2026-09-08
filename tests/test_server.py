@@ -18,7 +18,7 @@ from tests.reference_support import has_local_checkpoint
 from mini_llm.engine import Engine, EngineError
 from mini_llm.generation import FinishReason, GenerationError, GenerationEvent
 from mini_llm.sampling import SamplingConfig
-from mini_llm.server import build_parser, create_app, main
+from mini_llm.serving.server import build_parser, create_app, main
 from mini_llm.tokenizer import ChatMessage
 
 
@@ -274,8 +274,8 @@ class ServerCommandTests(unittest.TestCase):
 
         self.assertEqual(args.device, "cuda")
 
-    @patch("mini_llm.server.uvicorn.run")
-    @patch("mini_llm.server.Engine.from_model_dir")
+    @patch("mini_llm.serving.server.uvicorn.run")
+    @patch("mini_llm.serving.server.Engine.from_model_dir")
     def test_loads_engine_once_before_starting_one_worker(
         self, from_model_dir: MagicMock, uvicorn_run: MagicMock
     ) -> None:
@@ -322,8 +322,8 @@ class ServerCommandTests(unittest.TestCase):
         self.assertEqual(app.state.served_model, "qwen3-0.6b")
         self.assertIn("Loaded on cpu", output.getvalue())
 
-    @patch("mini_llm.server.uvicorn.run")
-    @patch("mini_llm.server.Engine.from_model_dir")
+    @patch("mini_llm.serving.server.uvicorn.run")
+    @patch("mini_llm.serving.server.Engine.from_model_dir")
     def test_uses_explicit_served_model_name(
         self, from_model_dir: MagicMock, uvicorn_run: MagicMock
     ) -> None:
@@ -346,8 +346,8 @@ class ServerCommandTests(unittest.TestCase):
             "my-local-model",
         )
 
-    @patch("mini_llm.server.uvicorn.run")
-    @patch("mini_llm.server.Engine.from_model_dir")
+    @patch("mini_llm.serving.server.uvicorn.run")
+    @patch("mini_llm.serving.server.Engine.from_model_dir")
     def test_reports_model_loading_error_without_starting_server(
         self, from_model_dir: MagicMock, uvicorn_run: MagicMock
     ) -> None:

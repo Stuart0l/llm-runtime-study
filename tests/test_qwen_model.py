@@ -11,7 +11,7 @@ import torch
 
 from mini_llm.checkpoint import SafeTensorCheckpoint
 from mini_llm.config import Qwen3Config
-from mini_llm.qwen_model import Qwen3DecoderLayer, Qwen3ForCausalLM
+from mini_llm.model.qwen import Qwen3DecoderLayer, Qwen3ForCausalLM
 from mini_llm.nn import RotaryEmbedding, build_position_ids
 from mini_llm.tokenizer import Qwen3Tokenizer
 from tests.reference_support import (

@@ -5,14 +5,14 @@ import unittest
 import torch
 
 from mini_llm.cache import KVCacheError
-from mini_llm.dense_cache import (
+from mini_llm.cache.dense import (
     DenseKVCache,
     DenseKVCacheManager,
     DenseLayerKVCache,
 )
 from mini_llm.config import GraniteMoeConfig
-from mini_llm.paged_cache import PagedKVCachePool
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.model.qwen import Qwen3ForCausalLM
 from tests.test_config import valid_granite_config
 from tests.test_qwen_model import _tiny_config
 

@@ -10,8 +10,9 @@ from pathlib import Path
 
 import torch
 
-from mini_llm.interfaces import ChatMessage, RuntimeCausalLM, RuntimeTokenizer
-from mini_llm.paged_cache import PagedKVCachePool
+from mini_llm.model.contracts import RuntimeCausalLM
+from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer
 
 
 HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None

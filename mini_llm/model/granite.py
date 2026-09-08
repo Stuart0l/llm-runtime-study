@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 from mini_llm.cache import LayerKVCache
 from mini_llm.config import GraniteMoeConfig
-from mini_llm.modeling import CausalLMBase, DecoderModel
+from mini_llm.model.base import CausalLMBase, DecoderModel
 from mini_llm.nn import GraniteAttention, GraniteMoeBlock, RMSNorm
 
 

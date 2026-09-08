@@ -10,18 +10,35 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence
 
 from tokenizers import Tokenizer
 
 from mini_llm.chat import (
+    ChatMessage,
     ChatTemplate,
     GraniteChatTemplate,
     Qwen3ChatTemplate,
     TokenizerError,
 )
 from mini_llm.config import DecoderConfig, GraniteMoeConfig, Qwen3Config, load_config
-from mini_llm.interfaces import ChatMessage
+
+
+class RuntimeTokenizer(Protocol):
+    """Tokenizer operations required by architecture-neutral generation."""
+
+    def encode(self, text: str) -> list[int]: ...
+
+    def decode(
+        self, token_ids: Sequence[int], *, skip_special_tokens: bool = False
+    ) -> str: ...
+
+    def format_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        enable_thinking: bool = False,
+    ) -> str: ...
 
 
 def _load_tokenizer_artifacts(model_path: Path) -> tuple[Tokenizer, dict[str, object]]:

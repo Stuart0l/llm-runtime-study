@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import unittest
 
 from mini_llm.config import ConfigError, DecoderConfig
-from mini_llm.model_loader import MODEL_TYPES, load_model
+from mini_llm.model.loader import MODEL_TYPES, load_model
 from tests.test_qwen_model import _tiny_config
 
 

@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from mini_llm.fusion import FusedMarlinProjection
+from mini_llm.quantization.fusion import FusedMarlinProjection
 from mini_llm.quantization import GPTQMarlinLinear
 from mini_llm.cache import LayerKVCache
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys

@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from mini_llm.config import ConfigError, DecoderConfig, load_config
-from mini_llm.granite_model import GraniteMoeForCausalLM
-from mini_llm.modeling import CausalLMBase
-from mini_llm.qwen_model import Qwen3ForCausalLM
+from mini_llm.model.base import CausalLMBase
+from mini_llm.model.granite import GraniteMoeForCausalLM
+from mini_llm.model.qwen import Qwen3ForCausalLM
 
 
 MODEL_TYPES: dict[str, type[CausalLMBase]] = {

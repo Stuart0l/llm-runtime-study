@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 from torch.nn import functional as F
-from mini_llm.fusion import FusedMarlinProjection
+from mini_llm.quantization.fusion import FusedMarlinProjection
 from mini_llm.quantization import GPTQMarlinLinear
 
 

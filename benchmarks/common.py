@@ -10,7 +10,7 @@ from typing import Callable, Generic, Sequence, TypeVar
 import torch
 
 from mini_llm.engine import Engine
-from mini_llm.interfaces import ChatMessage
+from mini_llm.tokenizer import ChatMessage
 
 
 T = TypeVar("T")

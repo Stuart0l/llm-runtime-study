@@ -10,7 +10,7 @@ from torch.nn import functional as F
 
 from mini_llm.cache import LayerKVCache
 from mini_llm.config import Qwen3Config
-from mini_llm.modeling import CausalLMBase, DecoderModel
+from mini_llm.model.base import CausalLMBase, DecoderModel
 from mini_llm.nn import Qwen3Attention, RMSNorm, SwiGLUFeedForward
 from mini_llm.quantization import GPTQMarlinLinear
 

@@ -153,7 +153,7 @@ widening after a lossy downcast does not restore the original precision.
 ### HTTP server
 
 ```bash
-python -m mini_llm.server \
+python -m mini_llm.serving.server \
   --model models/qwen3-0.6b \
   --host 127.0.0.1 \
   --port 8000 \
@@ -243,8 +243,8 @@ most of the batching speedup while reducing backend-specific route divergence.
 ### KV cache
 
 The runtime owns cache allocation. Models receive an explicit cache and depend
-only on the protocols in `mini_llm/cache.py`; implementations live in
-`mini_llm/dense_cache.py` and `mini_llm/paged_cache.py`.
+only on the protocols in `mini_llm/cache/contracts.py`; implementations live
+in `mini_llm/cache/dense.py` and `mini_llm/cache/paged.py`.
 
 The default paged backend stores each layer's keys and values as:
 

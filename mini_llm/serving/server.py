@@ -19,7 +19,7 @@ from mini_llm.checkpoint import CheckpointValidationError
 from mini_llm.config import ConfigError
 from mini_llm.engine import Engine, EngineError
 from mini_llm.generation import FinishReason, GenerationError, GenerationEvent
-from mini_llm.openai_api import (
+from mini_llm.serving.openai_api import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     OpenAIRequestError,
@@ -163,7 +163,7 @@ def _port_number(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m mini_llm.server",
+        prog="python -m mini_llm.serving.server",
         description="Serve a supported local model through Chat Completions.",
     )
     parser.add_argument("--model", type=Path, required=True)

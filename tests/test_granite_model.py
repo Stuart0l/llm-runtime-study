@@ -9,11 +9,11 @@ from pathlib import Path
 from safetensors.torch import save_file
 import torch
 
-from mini_llm.dense_cache import DenseKVCacheManager
+from mini_llm.cache.dense import DenseKVCacheManager
 from torch.nn import functional as F
 
 from mini_llm.config import GraniteMoeConfig
-from mini_llm.granite_model import (
+from mini_llm.model.granite import (
     GraniteMoeDecoderLayer,
     GraniteMoeForCausalLM,
     GraniteMoeModel,

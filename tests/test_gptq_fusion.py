@@ -6,7 +6,7 @@ import unittest
 import torch
 
 from mini_llm.checkpoint import SafeTensorCheckpoint
-from mini_llm.fusion import FusedMarlinProjection
+from mini_llm.quantization.fusion import FusedMarlinProjection
 from mini_llm.quantization import GPTQMarlinLinear
 
 

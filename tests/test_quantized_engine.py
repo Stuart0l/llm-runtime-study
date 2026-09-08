@@ -9,7 +9,7 @@ import torch
 
 from mini_llm.config import Qwen3Config
 from mini_llm.engine import Engine, EngineError
-from mini_llm.interfaces import ChatMessage
+from mini_llm.tokenizer import ChatMessage
 
 
 MODEL_DIRS = (

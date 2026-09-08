@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mini_llm.config import load_config
 from mini_llm.generation import generate
-from mini_llm.model_loader import load_model
+from mini_llm.model.loader import load_model
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage, load_tokenizer
 

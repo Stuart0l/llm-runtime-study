@@ -6,7 +6,7 @@ import unittest
 import torch
 from torch.nn import functional as F
 
-from mini_llm.dense_cache import DenseLayerKVCache
+from mini_llm.cache.dense import DenseLayerKVCache
 from mini_llm.nn import GraniteAttention, Qwen3Attention, repeat_kv_heads
 
 

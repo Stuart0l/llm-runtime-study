@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from mini_llm.quantization import GPTQMarlinLinear
+from mini_llm.quantization.gptq_marlin import GPTQMarlinLinear
 
 
 class FusedMarlinProjection:
@@ -78,4 +78,3 @@ class FusedMarlinProjection:
         if self._backend is None:
             raise RuntimeError("call prepare(device) before fused Marlin forward")
         return self._backend(inputs)
-
