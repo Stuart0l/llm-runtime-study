@@ -19,19 +19,32 @@ The runtime currently supports:
 
 ## Setup
 
-Python 3.11 or newer is required.
+Python 3.11 or newer and [uv](https://docs.astral.sh/uv/getting-started/installation/)
+are required.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+uv sync
 ```
+
+This creates `.venv`, installs the project in editable mode with its development
+dependencies, and reproduces the versions in `uv.lock`. Prefix project commands
+with `uv run`; activating the environment is optional.
+
+GPTQ-Marlin execution additionally needs the pinned vLLM binary operators. On
+Linux x86-64, install the lightweight operator-only dependency group with:
+
+```bash
+uv sync --group gptq
+```
+
+Keep that opt-in group selected when running a GPTQ checkpoint, for example
+`uv run --group gptq python -m mini_llm ...`.
 
 For NVIDIA execution, install a CUDA-enabled PyTorch build and verify it can
 see the GPU before loading a checkpoint:
 
 ```bash
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
 ### Model directories
@@ -68,7 +81,7 @@ checkpoint artifacts.
 ### One-shot generation
 
 ```bash
-python -m mini_llm \
+uv run python -m mini_llm \
   --model models/qwen3-0.6b \
   --prompt "Explain grouped-query attention." \
   --max-new-tokens 128 \
@@ -83,7 +96,7 @@ Granite.
 ### Interactive generation
 
 ```bash
-python -m mini_llm \
+uv run python -m mini_llm \
   --model models/qwen3-0.6b \
   --interactive \
   --max-new-tokens 128 \
@@ -153,7 +166,7 @@ widening after a lossy downcast does not restore the original precision.
 ### HTTP server
 
 ```bash
-python -m mini_llm.serving.server \
+uv run python -m mini_llm.serving.server \
   --model models/qwen3-0.6b \
   --host 127.0.0.1 \
   --port 8000 \
@@ -256,13 +269,13 @@ layout, and CUDA benchmark results.
 Run every applicable suite with one checkpoint load:
 
 ```bash
-python -m benchmarks --model models/granite-3.1-1b
+uv run python -m benchmarks --model models/granite-3.1-1b
 ```
 
 Select suites and inputs explicitly:
 
 ```bash
-python -m benchmarks \
+uv run python -m benchmarks \
   --model models/granite-3.1-1b \
   --benchmark cache-decode moe-prefill end-to-end \
   --device cpu \
@@ -299,7 +312,7 @@ device speedup can be smaller.
 Run the test suite:
 
 ```bash
-python -m unittest discover -s tests -v
+uv run python -m pytest
 ```
 
 Tests cover configuration and checkpoint validation, tokenizer/chat-template
@@ -311,15 +324,15 @@ tests skip cleanly when their model, dependency, or device is unavailable.
 Focused learning examples:
 
 ```bash
-python -m examples.inspect_config models/qwen3-0.6b
-python -m examples.tokenizer_demo models/qwen3-0.6b "Hello"
-python -m examples.checkpoint_inspect models/qwen3-0.6b
-python -m examples.norm_demo
-python -m examples.rope_demo
-python -m examples.mlp_demo
-python -m examples.attention_demo
-python -m examples.moe_demo
-python -m examples.generation_demo models/qwen3-0.6b
+uv run python -m examples.inspect_config models/qwen3-0.6b
+uv run python -m examples.tokenizer_demo models/qwen3-0.6b "Hello"
+uv run python -m examples.checkpoint_inspect models/qwen3-0.6b
+uv run python -m examples.norm_demo
+uv run python -m examples.rope_demo
+uv run python -m examples.mlp_demo
+uv run python -m examples.attention_demo
+uv run python -m examples.moe_demo
+uv run python -m examples.generation_demo models/qwen3-0.6b
 ```
 
 ## Current Limitations

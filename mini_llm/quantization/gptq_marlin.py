@@ -28,7 +28,7 @@ def _load_vllm_marlin_ops() -> None:
     except PackageNotFoundError as exc:
         raise RuntimeError(
             "gptq-marlin requires the vLLM binary wheel; install "
-            f"it with `pip install --no-deps vllm=={_VLLM_VERSION}`"
+            "it with `uv sync --group gptq`"
         ) from exc
     if installed.version != _VLLM_VERSION:
         raise RuntimeError(
