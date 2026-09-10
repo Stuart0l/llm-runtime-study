@@ -18,7 +18,10 @@ class LayerKVCache(Protocol):
     def length(self) -> int: ...
 
     def append(
-        self, keys: torch.Tensor, values: torch.Tensor
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]: ...
 
 

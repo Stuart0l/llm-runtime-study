@@ -63,7 +63,10 @@ class DenseLayerKVCache:
             )
 
     def append(
-        self, keys: torch.Tensor, values: torch.Tensor
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Write new positions and return views of the complete valid prefix."""
 
@@ -91,15 +94,15 @@ class DenseLayerKVCache:
             raise KVCacheError(
                 f"new K/V device must match cache device {self.keys.device}"
             )
-
         token_count = keys.shape[2]
         self.ensure_can_append(token_count)
         start = self.length
         end = start + token_count
         # Cache contents are inference state, not part of an autograd graph.
         with torch.no_grad():
-            self.keys[:, :, start:end].copy_(keys)
-            self.values[:, :, start:end].copy_(values)
+            positions = position_ids.flatten()
+            self.keys.index_copy_(2, positions, keys)
+            self.values.index_copy_(2, positions, values)
         self.length = end
         return self.keys[:, :, :end], self.values[:, :, :end]
 

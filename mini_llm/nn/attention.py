@@ -144,6 +144,7 @@ class GroupedQueryAttention(nn.Module):
         cosine: torch.Tensor,
         sine: torch.Tensor,
         *,
+        position_ids: torch.Tensor | None = None,
         cache: LayerKVCache | None = None,
     ) -> torch.Tensor:
         if not inputs.is_floating_point():
@@ -182,8 +183,10 @@ class GroupedQueryAttention(nn.Module):
         attention_mask = None
         is_causal = True
         if cache is not None:
+            if position_ids is None:
+                raise ValueError("cached attention requires position_ids")
             past_length = cache.length
-            keys, values = cache.append(keys, values)
+            keys, values = cache.append(keys, values, position_ids)
             if past_length > 0 and inputs.shape[1] == 1:
                 # A single decode query is at the final absolute position, so
                 # every valid cached key is in its past and is visible.

@@ -220,10 +220,18 @@ class GraniteAttentionTests(unittest.TestCase):
 
         reference = attention(inputs, cosine, sine)
         prefill = attention(
-            inputs[:, :2], cosine[:, :2], sine[:, :2], cache=cache
+            inputs[:, :2],
+            cosine[:, :2],
+            sine[:, :2],
+            position_ids=torch.tensor([[0, 1]]),
+            cache=cache,
         )
         decode = attention(
-            inputs[:, 2:], cosine[:, 2:], sine[:, 2:], cache=cache
+            inputs[:, 2:],
+            cosine[:, 2:],
+            sine[:, 2:],
+            position_ids=torch.tensor([[2]]),
+            cache=cache,
         )
 
         torch.testing.assert_close(prefill, reference[:, :2])

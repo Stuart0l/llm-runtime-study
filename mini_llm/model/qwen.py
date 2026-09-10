@@ -52,11 +52,18 @@ class Qwen3DecoderLayer(nn.Module):
         cosine: torch.Tensor,
         sine: torch.Tensor,
         *,
+        position_ids: torch.Tensor | None = None,
         cache: LayerKVCache | None = None,
     ) -> torch.Tensor:
         attention_residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states, cosine, sine, cache=cache)
+        hidden_states = self.self_attn(
+            hidden_states,
+            cosine,
+            sine,
+            position_ids=position_ids,
+            cache=cache,
+        )
         hidden_states = attention_residual + hidden_states
 
         mlp_residual = hidden_states

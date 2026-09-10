@@ -151,7 +151,10 @@ class PagedLayerKVCache:
         return self.handle._layer_lengths[self.layer_index]
 
     def append(
-        self, keys: torch.Tensor, values: torch.Tensor
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         self.handle._ensure_active()
         pool = self.handle.pool
@@ -172,7 +175,6 @@ class PagedLayerKVCache:
             raise KVCacheError(
                 f"new K/V device must match cache device {pool.device}"
             )
-
         token_count = keys.shape[2]
         if token_count <= 0:
             raise KVCacheError(f"token_count must be positive, got {token_count}")
@@ -186,23 +188,20 @@ class PagedLayerKVCache:
 
         source_keys = keys.squeeze(0).transpose(0, 1)
         source_values = values.squeeze(0).transpose(0, 1)
-        source_offset = 0
-        position = start
         with torch.no_grad():
-            while position < end:
-                table_index, block_offset = divmod(position, pool.block_size)
-                copy_count = min(end - position, pool.block_size - block_offset)
-                block_id = self.handle.block_table[table_index]
-                target = slice(block_offset, block_offset + copy_count)
-                source = slice(source_offset, source_offset + copy_count)
-                pool.keys[self.layer_index][block_id, target].copy_(
-                    source_keys[source]
-                )
-                pool.values[self.layer_index][block_id, target].copy_(
-                    source_values[source]
-                )
-                source_offset += copy_count
-                position += copy_count
+            positions = position_ids.flatten()
+            table_indices = torch.div(
+                positions, pool.block_size, rounding_mode="floor"
+            )
+            block_offsets = torch.remainder(positions, pool.block_size)
+            block_ids = self.handle.block_table.index_select(0, table_indices)
+            slots = block_ids * pool.block_size + block_offsets
+            pool.keys[self.layer_index].flatten(0, 1).index_copy_(
+                0, slots, source_keys
+            )
+            pool.values[self.layer_index].flatten(0, 1).index_copy_(
+                0, slots, source_values
+            )
         self.handle._layer_lengths[self.layer_index] = end
         return pool._gather(self.layer_index, self.handle, end)
 

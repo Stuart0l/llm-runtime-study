@@ -27,7 +27,9 @@ class DenseLayerKVCacheTests(unittest.TestCase):
         values = keys + 100
         key_pointer = cache.keys.data_ptr()
 
-        cached_keys, cached_values = cache.append(keys, values)
+        cached_keys, cached_values = cache.append(
+            keys, values, torch.tensor([[0, 1]])
+        )
 
         self.assertEqual(cache.length, 2)
         torch.testing.assert_close(cached_keys, keys)
@@ -41,10 +43,47 @@ class DenseLayerKVCacheTests(unittest.TestCase):
             keys=torch.empty(1, 1, 2, 2),
             values=torch.empty(1, 1, 2, 2),
         )
-        cache.append(torch.ones(1, 1, 2, 2), torch.ones(1, 1, 2, 2))
+        cache.append(
+            torch.ones(1, 1, 2, 2),
+            torch.ones(1, 1, 2, 2),
+            torch.tensor([[0, 1]]),
+        )
         with self.assertRaisesRegex(KVCacheError, "capacity exceeded"):
-            cache.append(torch.ones(1, 1, 1, 2), torch.ones(1, 1, 1, 2))
+            cache.append(
+                torch.ones(1, 1, 1, 2),
+                torch.ones(1, 1, 1, 2),
+                torch.tensor([[2]]),
+            )
         self.assertEqual(cache.length, 2)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_tensor_position_write_replays_at_a_new_position(self) -> None:
+        cache = DenseLayerKVCache(
+            keys=torch.zeros(1, 1, 4, 2, device="cuda"),
+            values=torch.zeros(1, 1, 4, 2, device="cuda"),
+        )
+        keys = torch.ones(1, 1, 1, 2, device="cuda")
+        values = keys + 1
+        position_ids = torch.tensor([[0]], device="cuda")
+
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                cache.append(keys, values, position_ids)
+                cache.reset()
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            cache.append(keys, values, position_ids)
+        position_ids.fill_(2)
+        keys.fill_(3)
+        values.fill_(4)
+        graph.replay()
+
+        torch.testing.assert_close(cache.keys[:, :, 2], keys[:, :, 0])
+        torch.testing.assert_close(cache.values[:, :, 2], values[:, :, 0])
 
 
 class DenseKVCacheTests(unittest.TestCase):
@@ -192,8 +231,10 @@ class PagedKVCachePoolTests(unittest.TestCase):
         expected = torch.cat((first, second), dim=2)
         gathered_keys = gathered_values = None
         for layer in handle.layers:
-            layer.append(first, first + 100)
-            gathered_keys, gathered_values = layer.append(second, second + 100)
+            layer.append(first, first + 100, torch.tensor([[0, 1, 2]]))
+            gathered_keys, gathered_values = layer.append(
+                second, second + 100, torch.tensor([[3, 4]])
+            )
         assert gathered_keys is not None and gathered_values is not None
         torch.testing.assert_close(gathered_keys, expected)
         torch.testing.assert_close(gathered_values, expected + 100)
@@ -245,7 +286,7 @@ class PagedKVCachePoolTests(unittest.TestCase):
         handle = pool.allocate(4)
         states = torch.ones(1, 2, 2, 2)
         for layer in handle.layers:
-            layer.append(states, states)
+            layer.append(states, states, torch.tensor([[0, 1]]))
         blocks = handle.block_table.clone()
         handle.rollback(1)
         handle.reset()

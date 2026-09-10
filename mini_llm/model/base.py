@@ -79,7 +79,13 @@ class DecoderModel(nn.Module):
             layer_cache = (
                 None if layer_caches is None else layer_caches[layer_index]
             )
-            hidden_states = layer(hidden_states, cosine, sine, cache=layer_cache)
+            hidden_states = layer(
+                hidden_states,
+                cosine,
+                sine,
+                position_ids=position_ids,
+                cache=layer_cache,
+            )
         return self.norm(hidden_states)
 
 
