@@ -59,8 +59,8 @@ class DenseLayerKVCacheTests(unittest.TestCase):
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
     def test_tensor_position_write_replays_at_a_new_position(self) -> None:
         cache = DenseLayerKVCache(
-            keys=torch.zeros(1, 1, 4, 2, device="cuda"),
-            values=torch.zeros(1, 1, 4, 2, device="cuda"),
+            keys=torch.zeros(1, 1, 20, 2, device="cuda"),
+            values=torch.zeros(1, 1, 20, 2, device="cuda"),
         )
         keys = torch.ones(1, 1, 1, 2, device="cuda")
         values = keys + 1
@@ -76,7 +76,9 @@ class DenseLayerKVCacheTests(unittest.TestCase):
 
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            cache.append(keys, values, position_ids)
+            cached_keys, cached_values = cache.append(keys, values, position_ids)
+        self.assertEqual(cached_keys.shape[2], 16)
+        self.assertEqual(cached_values.shape[2], 16)
         position_ids.fill_(2)
         keys.fill_(3)
         values.fill_(4)

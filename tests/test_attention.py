@@ -4,6 +4,7 @@ import math
 import unittest
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn import functional as F
 
 from mini_llm.cache.dense import DenseLayerKVCache
@@ -237,6 +238,69 @@ class GraniteAttentionTests(unittest.TestCase):
         torch.testing.assert_close(prefill, reference[:, :2])
         torch.testing.assert_close(decode, reference[:, 2:])
         self.assertEqual(cache.length, 3)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_dense_cached_attention_graph_replays_at_a_new_length(self) -> None:
+        torch.manual_seed(41)
+        attention = GraniteAttention(
+            hidden_size=128,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=64,
+            attention_scale=0.125,
+        ).cuda().half().eval()
+        cache = DenseLayerKVCache(
+            keys=torch.zeros(1, 1, 4, 64, device="cuda", dtype=torch.float16),
+            values=torch.zeros(1, 1, 4, 64, device="cuda", dtype=torch.float16),
+        )
+        inputs = torch.randn(1, 1, 128, device="cuda", dtype=torch.float16)
+        cosine, sine = _identity_rope_tables(1, 1, 64)
+        cosine = cosine.cuda().half()
+        sine = sine.cuda().half()
+        position_ids = torch.tensor([[0]], device="cuda")
+
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            side_stream = torch.cuda.Stream()
+            side_stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side_stream):
+                for _ in range(3):
+                    attention(
+                        inputs,
+                        cosine,
+                        sine,
+                        position_ids=position_ids,
+                        cache=cache,
+                    )
+                    cache.reset()
+            torch.cuda.current_stream().wait_stream(side_stream)
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                output = attention(
+                    inputs,
+                    cosine,
+                    sine,
+                    position_ids=position_ids,
+                    cache=cache,
+                )
+            position_ids.fill_(2)
+            inputs.fill_(0.25)
+            graph.replay()
+            replayed = output.clone()
+
+            reference_cache = DenseLayerKVCache(
+                keys=cache.keys.clone(),
+                values=cache.values.clone(),
+                length=2,
+            )
+            expected = attention(
+                inputs,
+                cosine,
+                sine,
+                position_ids=position_ids,
+                cache=reference_cache,
+            )
+        torch.testing.assert_close(replayed, expected)
 
     def test_rejects_invalid_explicit_attention_scale(self) -> None:
         for scale in (0.0, -1.0, float("inf")):

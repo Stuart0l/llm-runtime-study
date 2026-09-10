@@ -185,24 +185,13 @@ class GroupedQueryAttention(nn.Module):
         if cache is not None:
             if position_ids is None:
                 raise ValueError("cached attention requires position_ids")
-            past_length = cache.length
             keys, values = cache.append(keys, values, position_ids)
-            if past_length > 0 and inputs.shape[1] == 1:
-                # A single decode query is at the final absolute position, so
-                # every valid cached key is in its past and is visible.
-                is_causal = False
-            elif past_length > 0:
-                # For chunked appends, ordinary is_causal=True would align its
-                # triangular mask to the upper-left and hide most cached keys.
-                # Build an absolute-position mask with key_position <= query_position.
-                query_positions = past_length + torch.arange(
-                    inputs.shape[1], device=inputs.device
-                )
-                key_positions = torch.arange(keys.shape[2], device=inputs.device)
-                attention_mask = key_positions.unsqueeze(
-                    0
-                ) <= query_positions.unsqueeze(1)
-                is_causal = False
+            key_positions = torch.arange(keys.shape[2], device=inputs.device)
+            attention_mask = (
+                key_positions.unsqueeze(0)
+                <= position_ids.flatten().unsqueeze(1)
+            )
+            is_causal = False
 
         keys = repeat_kv_heads(keys, self.queries_per_kv_head)
         values = repeat_kv_heads(values, self.queries_per_kv_head)

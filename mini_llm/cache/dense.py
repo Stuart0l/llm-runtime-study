@@ -9,6 +9,8 @@ import torch
 from mini_llm.cache import KVCacheError, SequenceKVCache
 from mini_llm.config import DecoderConfig
 
+_CAPTURE_BUCKET_SIZE = 16
+
 
 @dataclass(slots=True)
 class DenseLayerKVCache:
@@ -104,7 +106,17 @@ class DenseLayerKVCache:
             self.keys.index_copy_(2, positions, keys)
             self.values.index_copy_(2, positions, values)
         self.length = end
-        return self.keys[:, :, :end], self.values[:, :, :end]
+        attention_length = end
+        if keys.is_cuda and torch.cuda.is_current_stream_capturing():
+            attention_length = min(
+                self.capacity,
+                ((end + _CAPTURE_BUCKET_SIZE - 1) // _CAPTURE_BUCKET_SIZE)
+                * _CAPTURE_BUCKET_SIZE,
+            )
+        return (
+            self.keys[:, :, :attention_length],
+            self.values[:, :, :attention_length],
+        )
 
     def reset(self) -> None:
         """Logically empty the cache without reallocating or clearing storage."""
