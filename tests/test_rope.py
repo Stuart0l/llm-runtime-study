@@ -91,6 +91,27 @@ class RotaryEmbeddingTests(unittest.TestCase):
         self.assertEqual(cosine.dtype, torch.bfloat16)
         self.assertEqual(sine.dtype, torch.bfloat16)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_forward_is_cuda_graph_capturable(self) -> None:
+        rope = RotaryEmbedding(128).cuda()
+        position_ids = torch.tensor([[17]], device="cuda")
+
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                rope(position_ids, output_dtype=torch.float16)
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            actual = rope(position_ids, output_dtype=torch.float16)
+        graph.replay()
+        expected = rope(position_ids, output_dtype=torch.float16)
+
+        torch.testing.assert_close(actual[0], expected[0])
+        torch.testing.assert_close(actual[1], expected[1])
+
     def test_nonzero_offset_matches_explicit_absolute_positions(self) -> None:
         rope = RotaryEmbedding(4)
         offset_positions = build_position_ids(3, offset=10)
@@ -100,19 +121,6 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         torch.testing.assert_close(offset_cosine, explicit_cosine)
         torch.testing.assert_close(offset_sine, explicit_sine)
-
-    def test_rejects_positions_outside_model_limit(self) -> None:
-        rope = RotaryEmbedding(4, max_position_embeddings=8)
-
-        with self.assertRaisesRegex(ValueError, "exceeds the model limit"):
-            rope(torch.tensor([[8]]))
-
-    def test_rejects_negative_position(self) -> None:
-        rope = RotaryEmbedding(4)
-
-        with self.assertRaisesRegex(ValueError, "non-negative"):
-            rope(torch.tensor([[-1]]))
-
 
 class PositionIdTests(unittest.TestCase):
     def test_builds_batched_absolute_positions(self) -> None:

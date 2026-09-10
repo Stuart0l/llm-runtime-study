@@ -118,12 +118,7 @@ class CacheBackendContractTests(unittest.TestCase):
                 with self.subTest(manager=type(manager).__name__):
                     cache = manager.allocate(4)
                     first = model.prefill(tokens[:, :2], cache=cache)
-                    hidden = model.model(
-                        tokens[:, 2:],
-                        layer_caches=cache.layers,
-                        position_offset=cache.length,
-                    )
-                    second = model._project_logits(hidden)
+                    second = model._cached_forward(tokens[:, 2:], cache)
                     torch.testing.assert_close(first, reference[:, :2])
                     torch.testing.assert_close(second, reference[:, 2:])
                     manager.release(cache)
@@ -149,6 +144,20 @@ class CacheBackendContractTests(unittest.TestCase):
         cache = manager.allocate(4)
         with self.assertRaisesRegex(RuntimeError, "prefill"):
             model.decode(torch.tensor([[1]]), cache=cache)
+
+    def test_cached_execution_validates_tokens_before_trusted_execution(self) -> None:
+        model = Qwen3ForCausalLM(_tiny_config()).eval()
+        manager = DenseKVCacheManager(
+            model.config, 4, dtype=torch.float32, device="cpu"
+        )
+        cache = manager.allocate(4)
+
+        with self.assertRaisesRegex(ValueError, "within vocabulary"):
+            model.prefill(torch.tensor([[model.config.vocab_size]]), cache=cache)
+        with self.assertRaisesRegex(ValueError, "batch size one"):
+            model.prefill(torch.tensor([[1], [2]]), cache=cache)
+
+        self.assertEqual(cache.length, 0)
 
     def test_model_rejects_backend_neutrally_incompatible_cache(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()

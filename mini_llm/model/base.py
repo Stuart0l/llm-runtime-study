@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import ClassVar, Iterable, Self
+from typing import ClassVar, Iterable, Self, Sequence
 
 import torch
 from torch import nn
@@ -50,7 +50,6 @@ class DecoderModel(nn.Module):
         self.rotary_emb = RotaryEmbedding(
             config.head_dim,
             theta=config.rope_theta,
-            max_position_embeddings=config.max_position_embeddings,
         )
 
     def forward(
@@ -58,54 +57,16 @@ class DecoderModel(nn.Module):
         input_ids: torch.Tensor,
         *,
         position_ids: torch.Tensor | None = None,
-        layer_caches: list[LayerKVCache] | None = None,
-        position_offset: int = 0,
+        layer_caches: Sequence[LayerKVCache] | None = None,
     ) -> torch.Tensor:
-        """Compute hidden states, optionally writing trusted per-layer caches."""
-
-        if input_ids.ndim != 2:
-            raise ValueError(
-                "input_ids must have shape [batch, sequence], got "
-                f"{tuple(input_ids.shape)}"
-            )
-        if input_ids.dtype == torch.bool or input_ids.is_floating_point():
-            raise TypeError(
-                f"input_ids must use an integer dtype, got {input_ids.dtype}"
-            )
-        if input_ids.numel() == 0:
-            raise ValueError("input_ids must contain at least one token")
-        if torch.any(input_ids < 0).item() or torch.any(
-            input_ids >= self.config.vocab_size
-        ).item():
-            raise ValueError(
-                "input_ids must be within vocabulary "
-                f"[0, {self.config.vocab_size})"
-            )
+        """Compute hidden states from tensor inputs and optional KV caches."""
 
         batch_size, sequence_length = input_ids.shape
-        if layer_caches is not None and batch_size != 1:
-            raise ValueError("v1 cached execution supports batch size one only")
-
-        expected_position_ids = build_position_ids(
-            sequence_length,
-            offset=position_offset,
-            batch_size=batch_size,
-            device=input_ids.device,
-        )
         if position_ids is None:
-            position_ids = expected_position_ids
-        elif position_ids.shape != input_ids.shape:
-            raise ValueError(
-                "position_ids must have the same [batch, sequence] shape as "
-                f"input_ids, got {tuple(position_ids.shape)} and "
-                f"{tuple(input_ids.shape)}"
-            )
-        elif layer_caches is not None and not torch.equal(
-            position_ids, expected_position_ids
-        ):
-            raise ValueError(
-                "cached position_ids must continue from the cache length "
-                f"{position_offset}, got {position_ids.tolist()}"
+            position_ids = build_position_ids(
+                sequence_length,
+                batch_size=batch_size,
+                device=input_ids.device,
             )
 
         hidden_states = self.embed_tokens(input_ids)
@@ -138,10 +99,55 @@ class CausalLMBase(nn.Module):
         *,
         position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Run a stateless, uncached full-sequence forward pass."""
+        """Validate and run a stateless, uncached request."""
+
+        self._validate_input_ids(input_ids)
+        if position_ids is not None:
+            if position_ids.shape != input_ids.shape:
+                raise ValueError(
+                    "position_ids must have the same [batch, sequence] shape as "
+                    f"input_ids, got {tuple(position_ids.shape)} and "
+                    f"{tuple(input_ids.shape)}"
+                )
+            if position_ids.dtype == torch.bool or position_ids.is_floating_point():
+                raise TypeError(
+                    f"position_ids must use an integer dtype, got {position_ids.dtype}"
+                )
+            if torch.any(position_ids < 0).item():
+                raise ValueError("position_ids must be non-negative")
+            if torch.any(
+                position_ids >= self.config.max_position_embeddings
+            ).item():
+                maximum = int(position_ids.max().item())
+                raise ValueError(
+                    f"position ID {maximum} exceeds the model limit "
+                    f"{self.config.max_position_embeddings - 1}"
+                )
 
         hidden_states = self.model(input_ids, position_ids=position_ids)
         return self._project_logits(hidden_states)
+
+    def _validate_input_ids(self, input_ids: torch.Tensor) -> None:
+        """Validate token tensors at each public request boundary."""
+
+        if input_ids.ndim != 2:
+            raise ValueError(
+                "input_ids must have shape [batch, sequence], got "
+                f"{tuple(input_ids.shape)}"
+            )
+        if input_ids.dtype == torch.bool or input_ids.is_floating_point():
+            raise TypeError(
+                f"input_ids must use an integer dtype, got {input_ids.dtype}"
+            )
+        if input_ids.numel() == 0:
+            raise ValueError("input_ids must contain at least one token")
+        if torch.any(input_ids < 0).item() or torch.any(
+            input_ids >= self.config.vocab_size
+        ).item():
+            raise ValueError(
+                "input_ids must be within vocabulary "
+                f"[0, {self.config.vocab_size})"
+            )
 
     def _project_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -181,14 +187,22 @@ class CausalLMBase(nn.Module):
     ) -> torch.Tensor:
         """Run one cached forward pass through a backend-neutral cache view."""
 
+        self._validate_input_ids(input_ids)
+        if input_ids.shape[0] != 1:
+            raise ValueError("v1 cached execution supports batch size one only")
         sequence_length = input_ids.shape[1]
         cache.ensure_can_append(sequence_length)
         past_length = cache.length
+        position_ids = build_position_ids(
+            sequence_length,
+            offset=past_length,
+            device=input_ids.device,
+        )
         try:
             hidden_states = self.model(
                 input_ids,
+                position_ids=position_ids,
                 layer_caches=cache.layers,
-                position_offset=past_length,
             )
             expected_length = past_length + sequence_length
             if cache.length != expected_length:

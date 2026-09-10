@@ -11,6 +11,7 @@ import torch
 
 from mini_llm.checkpoint import SafeTensorCheckpoint
 from mini_llm.config import Qwen3Config
+from mini_llm.model.base import DecoderModel
 from mini_llm.model.qwen import Qwen3DecoderLayer, Qwen3ForCausalLM
 from mini_llm.nn import RotaryEmbedding, build_position_ids
 from mini_llm.tokenizer import Qwen3Tokenizer
@@ -144,6 +145,29 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
 
         torch.testing.assert_close(automatic, explicit)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_decoder_forward_is_cuda_graph_capturable(self) -> None:
+        decoder = DecoderModel(_tiny_config(), ()).eval().cuda()
+        decoder.requires_grad_(False)
+        input_ids = torch.tensor([[1]], device="cuda")
+        position_ids = torch.tensor([[7]], device="cuda")
+
+        with torch.inference_mode():
+            side_stream = torch.cuda.Stream()
+            side_stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side_stream):
+                for _ in range(3):
+                    decoder(input_ids, position_ids=position_ids)
+            torch.cuda.current_stream().wait_stream(side_stream)
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                actual = decoder(input_ids, position_ids=position_ids)
+            graph.replay()
+            expected = decoder(input_ids, position_ids=position_ids)
+
+        torch.testing.assert_close(actual, expected)
+
     def test_module_names_match_checkpoint_contract(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config())
         names = set(model.state_dict())
@@ -238,13 +262,17 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
         expected = source(input_ids)
         torch.testing.assert_close(actual, expected)
 
-    def test_rejects_invalid_token_ids_and_position_shape(self) -> None:
+    def test_rejects_invalid_token_ids_and_positions(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config())
 
         with self.assertRaisesRegex(ValueError, "within vocabulary"):
             model(torch.tensor([[32]]))
         with self.assertRaisesRegex(ValueError, "same.*shape"):
             model(torch.tensor([[1, 2]]), position_ids=torch.tensor([[0]]))
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            model(torch.tensor([[1]]), position_ids=torch.tensor([[-1]]))
+        with self.assertRaisesRegex(ValueError, "exceeds the model limit"):
+            model(torch.tensor([[1]]), position_ids=torch.tensor([[32]]))
 
 
 if __name__ == "__main__":

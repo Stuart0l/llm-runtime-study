@@ -19,22 +19,15 @@ class RotaryEmbedding(nn.Module):
         head_dim: int,
         *,
         theta: float = 10_000.0,
-        max_position_embeddings: int | None = None,
     ) -> None:
         super().__init__()
         if head_dim <= 0 or head_dim % 2 != 0:
             raise ValueError(f"head_dim must be a positive even integer, got {head_dim}")
         if theta <= 0:
             raise ValueError(f"theta must be positive, got {theta}")
-        if max_position_embeddings is not None and max_position_embeddings <= 0:
-            raise ValueError(
-                "max_position_embeddings must be positive when provided, got "
-                f"{max_position_embeddings}"
-            )
 
         self.head_dim = head_dim
         self.theta = theta
-        self.max_position_embeddings = max_position_embeddings
         inverse_frequencies = self._build_inverse_frequencies()
         self.register_buffer("inverse_frequencies", inverse_frequencies, persistent=False)
 
@@ -75,18 +68,6 @@ class RotaryEmbedding(nn.Module):
             )
         if position_ids.dtype == torch.bool or position_ids.is_floating_point():
             raise TypeError(f"position_ids must use an integer dtype, got {position_ids.dtype}")
-        if position_ids.numel() and torch.any(position_ids < 0).item():
-            raise ValueError("position_ids must be non-negative")
-        if (
-            self.max_position_embeddings is not None
-            and position_ids.numel()
-            and torch.any(position_ids >= self.max_position_embeddings).item()
-        ):
-            maximum = int(position_ids.max().item())
-            raise ValueError(
-                f"position ID {maximum} exceeds the model limit "
-                f"{self.max_position_embeddings - 1}"
-            )
         if not output_dtype.is_floating_point:
             raise TypeError(f"output_dtype must be floating point, got {output_dtype}")
 
@@ -99,10 +80,7 @@ class RotaryEmbedding(nn.Module):
         return angles.cos().to(output_dtype), angles.sin().to(output_dtype)
 
     def extra_repr(self) -> str:
-        return (
-            f"head_dim={self.head_dim}, theta={self.theta}, "
-            f"max_position_embeddings={self.max_position_embeddings}"
-        )
+        return f"head_dim={self.head_dim}, theta={self.theta}"
 
 
 def build_position_ids(
