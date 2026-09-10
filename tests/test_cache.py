@@ -183,7 +183,10 @@ class PagedKVCachePoolTests(unittest.TestCase):
             config, 6, block_size=2, dtype=torch.float32, device="cpu"
         )
         handle = pool.allocate(5)
-        self.assertEqual(handle.block_table, [0, 1, 2])
+        self.assertEqual(handle.block_table.tolist(), [0, 1, 2])
+        self.assertEqual(handle.block_table.dtype, torch.long)
+        self.assertEqual(handle.block_table.device, pool.device)
+        block_table_pointer = handle.block_table.data_ptr()
         first = torch.arange(12, dtype=torch.float32).view(1, 2, 3, 2)
         second = torch.arange(8, dtype=torch.float32).view(1, 2, 2, 2) + 20
         expected = torch.cat((first, second), dim=2)
@@ -194,7 +197,30 @@ class PagedKVCachePoolTests(unittest.TestCase):
         assert gathered_keys is not None and gathered_values is not None
         torch.testing.assert_close(gathered_keys, expected)
         torch.testing.assert_close(gathered_values, expected + 100)
+        self.assertEqual(handle.block_table.data_ptr(), block_table_pointer)
         pool.release(handle)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_gather_is_cuda_graph_capturable(self) -> None:
+        pool = PagedKVCachePool(
+            _tiny_config(), 4, block_size=2, dtype=torch.float32, device="cuda"
+        )
+        handle = pool.allocate(4)
+
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                pool._gather(0, handle, 2)
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            keys, values = pool._gather(0, handle, 2)
+        graph.replay()
+
+        self.assertEqual(keys.shape, (1, 2, 2, 2))
+        self.assertEqual(values.shape, keys.shape)
 
     def test_pool_exhaustion_release_and_deterministic_reuse(self) -> None:
         pool = PagedKVCachePool(
@@ -204,12 +230,12 @@ class PagedKVCachePoolTests(unittest.TestCase):
         second = pool.allocate(2)
         with self.assertRaisesRegex(KVCacheError, "pool exhausted"):
             pool.allocate(1)
-        released_id = first.block_table[0]
+        released_id = first.block_table[0].item()
         pool.release(first)
         pool.release(first)
         replacement = pool.allocate(1)
-        self.assertEqual(replacement.block_table, [released_id])
-        self.assertEqual(second.block_table, [1])
+        self.assertEqual(replacement.block_table.tolist(), [released_id])
+        self.assertEqual(second.block_table.tolist(), [1])
 
     def test_reset_rollback_release_and_block_reuse(self) -> None:
         config = _tiny_config()
@@ -220,10 +246,10 @@ class PagedKVCachePoolTests(unittest.TestCase):
         states = torch.ones(1, 2, 2, 2)
         for layer in handle.layers:
             layer.append(states, states)
-        blocks = list(handle.block_table)
+        blocks = handle.block_table.clone()
         handle.rollback(1)
         handle.reset()
-        self.assertEqual(handle.block_table, blocks)
+        torch.testing.assert_close(handle.block_table, blocks)
         pool.release(handle)
         with self.assertRaisesRegex(KVCacheError, "released"):
             _ = handle.length
@@ -270,7 +296,9 @@ class PagedKVCachePoolTests(unittest.TestCase):
         torch.testing.assert_close(second_prefill, second_reference[:, :2])
         torch.testing.assert_close(first_decode, first_reference[:, 3:])
         torch.testing.assert_close(second_decode, second_reference[:, 2:])
-        self.assertTrue(set(first.block_table).isdisjoint(second.block_table))
+        self.assertTrue(
+            set(first.block_table.tolist()).isdisjoint(second.block_table.tolist())
+        )
 
 
 if __name__ == "__main__":

@@ -106,7 +106,11 @@ class PagedKVCachePool:
                 "KV block pool exhausted: need "
                 f"{required_blocks} blocks but only {self.free_blocks} are free"
             )
-        block_table = [self._free_blocks.pop() for _ in range(required_blocks)]
+        block_table = torch.tensor(
+            [self._free_blocks.pop() for _ in range(required_blocks)],
+            dtype=torch.long,
+            device=self.device,
+        )
         handle = SequenceCacheHandle(self, capacity, block_table)
         self._active.add(handle)
         self._last_allocation_num_bytes = handle.num_bytes
@@ -126,11 +130,8 @@ class PagedKVCachePool:
     def _gather(
         self, layer_index: int, handle: "SequenceCacheHandle", length: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        block_ids = torch.tensor(
-            handle.block_table, dtype=torch.long, device=self.device
-        )
-        keys = self.keys[layer_index].index_select(0, block_ids)
-        values = self.values[layer_index].index_select(0, block_ids)
+        keys = self.keys[layer_index].index_select(0, handle.block_table)
+        values = self.values[layer_index].index_select(0, handle.block_table)
         # Page layout is [block, token, kv_head, dim]; SDPA consumes
         # [batch, kv_head, token, dim]. This gather is the reference backend.
         keys = keys.flatten(0, 1)[:length].permute(1, 0, 2).unsqueeze(0)
@@ -213,7 +214,7 @@ class SequenceCacheHandle:
         self,
         pool: PagedKVCachePool,
         capacity: int,
-        block_table: list[int],
+        block_table: torch.Tensor,
     ) -> None:
         self.pool = pool
         self.capacity = capacity
@@ -259,7 +260,7 @@ class SequenceCacheHandle:
     def num_bytes(self) -> int:
         bytes_per_element = torch.empty((), dtype=self.dtype).element_size()
         return (
-            len(self.block_table)
+            self.block_table.numel()
             * self.pool.block_size
             * self.pool.num_layers
             * self.pool.num_key_value_heads
@@ -292,8 +293,8 @@ class SequenceCacheHandle:
     def _release(self) -> list[int]:
         """Invalidate this handle and return its physical block IDs."""
 
-        blocks = self.block_table
-        self.block_table = []
+        blocks = self.block_table.tolist()
+        self.block_table = self.block_table.new_empty(0)
         self._layer_lengths[:] = [0] * self.pool.num_layers
         self._released = True
         return blocks
