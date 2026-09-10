@@ -11,6 +11,7 @@ from torch.nn import functional as F
 from mini_llm.quantization.fusion import FusedMarlinProjection
 from mini_llm.quantization import GPTQMarlinLinear
 from mini_llm.cache import LayerKVCache
+from mini_llm.cache.paged import PagedLayerKVCache
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys
 from mini_llm.nn.rope import apply_rotary_position_embeddings
 
@@ -180,31 +181,64 @@ class GroupedQueryAttention(nn.Module):
             queries, keys, cosine, sine
         )
 
-        attention_mask = None
-        is_causal = True
-        if cache is not None:
-            if position_ids is None:
-                raise ValueError("cached attention requires position_ids")
-            keys, values = cache.append(keys, values, position_ids)
-            key_positions = torch.arange(keys.shape[2], device=inputs.device)
-            attention_mask = (
-                key_positions.unsqueeze(0)
-                <= position_ids.flatten().unsqueeze(1)
-            )
-            is_causal = False
+        if cache is not None and position_ids is None:
+            raise ValueError("cached attention requires position_ids")
+        if (
+            isinstance(cache, PagedLayerKVCache)
+            and inputs.is_cuda
+            and not self.training
+        ):
+            cache.write(keys, values, position_ids)
+            from vllm.vllm_flash_attn import flash_attn_varlen_func
 
-        keys = repeat_kv_heads(keys, self.queries_per_kv_head)
-        values = repeat_kv_heads(values, self.queries_per_kv_head)
-        dropout_p = self.attention_dropout if self.training else 0.0
-        attended = F.scaled_dot_product_attention(
-            queries,
-            keys,
-            values,
-            attn_mask=attention_mask,
-            dropout_p=dropout_p,
-            is_causal=is_causal,
-            scale=self.scaling,
-        )
+            cache_view = cache.view(gathered=False)
+            assert cache_view.block_table is not None
+            query_length = queries.shape[2]
+            query = queries.transpose(1, 2).contiguous().view(
+                query_length, queries.shape[1], queries.shape[3]
+            )
+            output = flash_attn_varlen_func(
+                q=query,
+                k=cache_view.keys,
+                v=cache_view.values,
+                cu_seqlens_q=torch.arange(
+                    2, dtype=torch.int32, device=queries.device
+                )
+                * query_length,
+                max_seqlen_q=query_length,
+                seqused_k=position_ids[:, -1].to(torch.int32) + 1,
+                max_seqlen_k=cache_view.capacity,
+                softmax_scale=self.scaling,
+                causal=True,
+                block_table=cache_view.block_table,
+            )
+            attended = output.view(
+                1, query_length, queries.shape[1], queries.shape[3]
+            ).transpose(1, 2)
+        else:
+            attention_mask = None
+            is_causal = True
+            if cache is not None:
+                keys, values = cache.append(keys, values, position_ids)
+                key_positions = torch.arange(keys.shape[2], device=inputs.device)
+                attention_mask = (
+                    key_positions.unsqueeze(0)
+                    <= position_ids.flatten().unsqueeze(1)
+                )
+                is_causal = False
+
+            keys = repeat_kv_heads(keys, self.queries_per_kv_head)
+            values = repeat_kv_heads(values, self.queries_per_kv_head)
+            dropout_p = self.attention_dropout if self.training else 0.0
+            attended = F.scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                attn_mask=attention_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                scale=self.scaling,
+            )
 
         batch_size, _, sequence_length, _ = attended.shape
         concatenated = attended.transpose(1, 2).contiguous().view(

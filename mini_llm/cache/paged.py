@@ -6,7 +6,7 @@ import math
 
 import torch
 
-from mini_llm.cache import KVCacheError, SequenceKVCache
+from mini_llm.cache import KVCacheError, LayerKVCacheView, SequenceKVCache
 from mini_llm.config import DecoderConfig
 
 
@@ -108,7 +108,7 @@ class PagedKVCachePool:
             )
         block_table = torch.tensor(
             [self._free_blocks.pop() for _ in range(required_blocks)],
-            dtype=torch.long,
+            dtype=torch.int32,
             device=self.device,
         )
         handle = SequenceCacheHandle(self, capacity, block_table)
@@ -156,6 +156,40 @@ class PagedLayerKVCache:
         values: torch.Tensor,
         position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Write K/V and gather the exact logical prefix for reference SDPA."""
+
+        self.write(keys, values, position_ids)
+        view = self.view(gathered=True)
+        return view.keys, view.values
+
+    def view(self, *, gathered: bool) -> LayerKVCacheView:
+        """Return logical contiguous K/V or the physical paged representation."""
+
+        pool = self.handle.pool
+        if gathered:
+            keys, values = pool._gather(
+                self.layer_index, self.handle, self.length
+            )
+            block_table = None
+        else:
+            keys = pool.keys[self.layer_index]
+            values = pool.values[self.layer_index]
+            block_table = self.handle.block_table.unsqueeze(0)
+        return LayerKVCacheView(
+            keys=keys,
+            values=values,
+            block_table=block_table,
+            capacity=self.handle.capacity,
+        )
+
+    def write(
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> None:
+        """Write logical token positions into their physical cache blocks."""
+
         self.handle._ensure_active()
         pool = self.handle.pool
         if keys.ndim != 4:
@@ -203,7 +237,6 @@ class PagedLayerKVCache:
                 0, slots, source_values
             )
         self.handle._layer_lengths[self.layer_index] = end
-        return pool._gather(self.layer_index, self.handle, end)
 
 
 class SequenceCacheHandle:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, Sequence
 
 import torch
@@ -11,11 +12,30 @@ class KVCacheError(ValueError):
     """Raised when cache tensors or logical positions are invalid."""
 
 
+@dataclass(frozen=True, slots=True)
+class LayerKVCacheView:
+    """K/V tensors plus metadata describing their attention layout."""
+
+    keys: torch.Tensor
+    values: torch.Tensor
+    block_table: torch.Tensor | None
+    capacity: int
+
+
 class LayerKVCache(Protocol):
     """Storage-independent interface consumed by decoder attention."""
 
     @property
     def length(self) -> int: ...
+
+    def write(
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> None: ...
+
+    def view(self, *, gathered: bool) -> LayerKVCacheView: ...
 
     def append(
         self,

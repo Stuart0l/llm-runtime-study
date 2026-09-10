@@ -225,7 +225,7 @@ class PagedKVCachePoolTests(unittest.TestCase):
         )
         handle = pool.allocate(5)
         self.assertEqual(handle.block_table.tolist(), [0, 1, 2])
-        self.assertEqual(handle.block_table.dtype, torch.long)
+        self.assertEqual(handle.block_table.dtype, torch.int32)
         self.assertEqual(handle.block_table.device, pool.device)
         block_table_pointer = handle.block_table.data_ptr()
         first = torch.arange(12, dtype=torch.float32).view(1, 2, 3, 2)
@@ -240,6 +240,15 @@ class PagedKVCachePoolTests(unittest.TestCase):
         assert gathered_keys is not None and gathered_values is not None
         torch.testing.assert_close(gathered_keys, expected)
         torch.testing.assert_close(gathered_values, expected + 100)
+        gathered = handle.layers[0].view(gathered=True)
+        scattered = handle.layers[0].view(gathered=False)
+        torch.testing.assert_close(gathered.keys, expected)
+        self.assertIsNone(gathered.block_table)
+        self.assertIs(scattered.keys, pool.keys[0])
+        self.assertIs(scattered.values, pool.values[0])
+        assert scattered.block_table is not None
+        self.assertEqual(scattered.block_table.data_ptr(), block_table_pointer)
+        self.assertEqual(scattered.capacity, 5)
         self.assertEqual(handle.block_table.data_ptr(), block_table_pointer)
         pool.release(handle)
 

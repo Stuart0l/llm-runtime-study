@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 import unittest
 
 import torch
@@ -8,6 +9,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn import functional as F
 
 from mini_llm.cache.dense import DenseLayerKVCache
+from mini_llm.cache.paged import PagedKVCachePool
 from mini_llm.nn import GraniteAttention, Qwen3Attention, repeat_kv_heads
 
 
@@ -301,6 +303,133 @@ class GraniteAttentionTests(unittest.TestCase):
                 cache=reference_cache,
             )
         torch.testing.assert_close(replayed, expected)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_paged_flash_attention_matches_sdpa_and_replays(self) -> None:
+        torch.manual_seed(43)
+        attention = GraniteAttention(
+            hidden_size=128,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=64,
+            attention_scale=0.125,
+        ).cuda().half().eval()
+        dense_cache = DenseLayerKVCache(
+            keys=torch.zeros(1, 1, 20, 64, device="cuda", dtype=torch.float16),
+            values=torch.zeros(1, 1, 20, 64, device="cuda", dtype=torch.float16),
+        )
+        pool = PagedKVCachePool(
+            SimpleNamespace(
+                max_position_embeddings=32,
+                num_hidden_layers=1,
+                num_key_value_heads=1,
+                head_dim=64,
+            ),
+            32,
+            dtype=torch.float16,
+            device="cuda",
+        )
+        paged_handle = pool.allocate(20)
+        paged_cache = paged_handle.layers[0]
+        inputs = torch.randn(1, 17, 128, device="cuda", dtype=torch.float16)
+        cosine, sine = _identity_rope_tables(1, 17, 64)
+        cosine = cosine.cuda().half()
+        sine = sine.cuda().half()
+        positions = torch.arange(17, device="cuda").unsqueeze(0)
+
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            dense_prefill = attention(
+                inputs,
+                cosine,
+                sine,
+                position_ids=positions,
+                cache=dense_cache,
+            )
+        paged_prefill = attention(
+            inputs,
+            cosine,
+            sine,
+            position_ids=positions,
+            cache=paged_cache,
+        )
+
+        decode_input = torch.randn(1, 1, 128, device="cuda", dtype=torch.float16)
+        decode_cosine, decode_sine = _identity_rope_tables(1, 1, 64)
+        decode_cosine = decode_cosine.cuda().half()
+        decode_sine = decode_sine.cuda().half()
+        decode_position = torch.tensor([[17]], device="cuda")
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            dense_decode = attention(
+                decode_input,
+                decode_cosine,
+                decode_sine,
+                position_ids=decode_position,
+                cache=dense_cache,
+            )
+        paged_decode = attention(
+            decode_input,
+            decode_cosine,
+            decode_sine,
+            position_ids=decode_position,
+            cache=paged_cache,
+        )
+
+        torch.testing.assert_close(
+            paged_prefill, dense_prefill, rtol=2e-3, atol=2e-3
+        )
+        torch.testing.assert_close(
+            paged_decode, dense_decode, rtol=2e-3, atol=2e-3
+        )
+
+        graph_input = torch.randn(
+            1, 1, 128, device="cuda", dtype=torch.float16
+        )
+        captured_input = graph_input.clone()
+        graph_position = torch.tensor([[18]], device="cuda")
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                attention(
+                    graph_input,
+                    decode_cosine,
+                    decode_sine,
+                    position_ids=graph_position,
+                    cache=paged_cache,
+                )
+                paged_handle.rollback(18)
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            graph_output = attention(
+                graph_input,
+                decode_cosine,
+                decode_sine,
+                position_ids=graph_position,
+                cache=paged_cache,
+            )
+        graph_position.fill_(19)
+        graph_input.fill_(0.25)
+        graph.replay()
+        replayed = graph_output.clone()
+
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            attention(
+                captured_input,
+                decode_cosine,
+                decode_sine,
+                position_ids=torch.tensor([[18]], device="cuda"),
+                cache=dense_cache,
+            )
+            expected = attention(
+                graph_input,
+                decode_cosine,
+                decode_sine,
+                position_ids=graph_position,
+                cache=dense_cache,
+            )
+        torch.testing.assert_close(replayed, expected, rtol=2e-3, atol=2e-3)
 
     def test_rejects_invalid_explicit_attention_scale(self) -> None:
         for scale in (0.0, -1.0, float("inf")):

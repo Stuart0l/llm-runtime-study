@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
-from mini_llm.cache import KVCacheError, SequenceKVCache
+from mini_llm.cache import KVCacheError, LayerKVCacheView, SequenceKVCache
 from mini_llm.config import DecoderConfig
 
 _CAPTURE_BUCKET_SIZE = 16
@@ -72,6 +72,35 @@ class DenseLayerKVCache:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Write new positions and return views of the complete valid prefix."""
 
+        self.write(keys, values, position_ids)
+        view = self.view(gathered=True)
+        return view.keys, view.values
+
+    def view(self, *, gathered: bool) -> LayerKVCacheView:
+        """Return the contiguous prefix used by attention."""
+
+        attention_length = self.length
+        if self.keys.is_cuda and torch.cuda.is_current_stream_capturing():
+            attention_length = min(
+                self.capacity,
+                ((self.length + _CAPTURE_BUCKET_SIZE - 1) // _CAPTURE_BUCKET_SIZE)
+                * _CAPTURE_BUCKET_SIZE,
+            )
+        return LayerKVCacheView(
+            keys=self.keys[:, :, :attention_length],
+            values=self.values[:, :, :attention_length],
+            block_table=None,
+            capacity=self.capacity,
+        )
+
+    def write(
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> None:
+        """Write logical token positions into contiguous cache storage."""
+
         if keys.ndim != 4:
             raise KVCacheError(
                 "new keys must have shape [1, kv_heads, tokens, head_dim], got "
@@ -106,17 +135,6 @@ class DenseLayerKVCache:
             self.keys.index_copy_(2, positions, keys)
             self.values.index_copy_(2, positions, values)
         self.length = end
-        attention_length = end
-        if keys.is_cuda and torch.cuda.is_current_stream_capturing():
-            attention_length = min(
-                self.capacity,
-                ((end + _CAPTURE_BUCKET_SIZE - 1) // _CAPTURE_BUCKET_SIZE)
-                * _CAPTURE_BUCKET_SIZE,
-            )
-        return (
-            self.keys[:, :, :attention_length],
-            self.values[:, :, :attention_length],
-        )
 
     def reset(self) -> None:
         """Logically empty the cache without reallocating or clearing storage."""
