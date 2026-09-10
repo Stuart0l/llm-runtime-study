@@ -17,6 +17,25 @@ The runtime currently supports:
 | Cache | Runtime-owned request caches; paged by default, dense optional |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
+### Platform support
+
+The table distinguishes native accelerated paths from compatible fallback
+implementations. Quantized execution uses FP16 activations.
+
+| Feature | CPU | Apple MPS | NVIDIA CUDA |
+| --- | --- | --- | --- |
+| Qwen3 dense checkpoints | Supported | Supported | Supported |
+| Granite 3.1 sparse-MoE checkpoints | Supported | Supported | Supported |
+| GPTQ INT4 (W4A16) | Not supported | Not supported | GPTQ-Marlin; Linux x86-64 and compute capability 7.5+ |
+| GPTQ INT8 (W8A16) | Not supported | Not supported | GPTQ-Marlin; Linux x86-64 and compute capability 7.5+ |
+| Regular PyTorch SDPA | Native | Native | Native |
+| Variable-length FlashAttention | Not available | Not available | Native through the pinned vLLM wheel |
+| Dense KV cache | Contiguous SDPA | Contiguous SDPA | Contiguous SDPA |
+| Paged KV cache | Gather + SDPA | Gather + SDPA | Direct block-table FlashAttention |
+| Granite MoE dispatch | Active-expert loop | Batched prefill and gathered decode | Batched prefill and gathered decode |
+| CUDA graph decode | Not applicable | Not applicable | Attention components verified; end-to-end engine replay not yet integrated |
+| Sampling, CLI, and HTTP API | Supported | Supported | Supported |
+
 ## Setup
 
 Python 3.11 or newer and [uv](https://docs.astral.sh/uv/getting-started/installation/)
@@ -30,15 +49,15 @@ This creates `.venv`, installs the project in editable mode with its development
 dependencies, and reproduces the versions in `uv.lock`. Prefix project commands
 with `uv run`; activating the environment is optional.
 
-GPTQ-Marlin execution additionally needs the pinned vLLM binary operators. On
-Linux x86-64, install the lightweight operator-only dependency group with:
+CUDA paged attention and GPTQ-Marlin execution use operators from the pinned
+vLLM binary wheel. On Linux x86-64, install the operator dependency group with:
 
 ```bash
 uv sync --group gptq
 ```
 
-Keep that opt-in group selected when running a GPTQ checkpoint, for example
-`uv run --group gptq python -m mini_llm ...`.
+Keep that opt-in group selected when using CUDA paged attention or a GPTQ
+checkpoint, for example `uv run --group gptq python -m mini_llm ...`.
 
 For NVIDIA execution, install a CUDA-enabled PyTorch build and verify it can
 see the GPU before loading a checkpoint:
@@ -253,6 +272,34 @@ Accelerator prefill keeps the larger gate/up projection in FP16 and widens the
 smaller output projection and routing-weighted reduction to FP32. This preserves
 most of the batching speedup while reducing backend-specific route divergence.
 
+### Attention execution
+
+Each attention layer first projects the residual stream into Q, K, and V,
+normalizes Q/K where required by the architecture, and applies RoPE. New K/V
+states are written into the selected request cache using device position IDs.
+Grouped-query attention shares each K/V head across its corresponding query
+heads, applies causal scaled dot-product attention, concatenates the attended
+query heads, and projects the result back into the residual-stream width.
+
+The runtime has two implementations of that same attention operation:
+
+- **Regular PyTorch SDPA:** consumes contiguous
+  `[batch, heads, tokens, head_dim]` tensors. The runtime repeats K/V heads for
+  GQA and supplies an absolute-position causal mask during cached execution.
+- **Variable-length FlashAttention on CUDA:** consumes flattened queries, physical K/V
+  blocks, a block table, and the effective sequence length. It applies causal
+  masking and GQA head mapping inside the kernel without materializing
+  contiguous, head-repeated K/V tensors first.
+
+```text
+hidden states
+    → Q/K/V projection
+    → Q/K normalization and RoPE
+    → K/V cache write
+    → grouped-query causal attention
+    → attention-output projection
+```
+
 ### KV cache
 
 The runtime owns request caches and passes them to models through one
@@ -260,6 +307,17 @@ backend-neutral interface. The default paged backend stores 16-token K/V
 blocks in a global pool and gives each request one ordered block table shared
 across decoder layers; a contiguous per-request dense backend remains
 available for comparison.
+
+- **Dense cache:** the cache exposes a contiguous K/V prefix and PyTorch SDPA
+  performs causal attention. During CUDA graph capture, the view is rounded to
+  a fixed 16-token bucket and the device-position mask hides unused entries, so
+  one graph can replay at multiple lengths within that bucket.
+- **Paged cache on CUDA:** vLLM `flash_attn_varlen_func` reads physical K/V
+  blocks through the request's block table. It handles grouped-query attention
+  directly and avoids gathering or repeating cached KV heads.
+- **Paged cache on CPU/MPS:** the cache gathers its logical prefix into
+  contiguous tensors and uses the same SDPA reference path as the dense
+  backend.
 
 See [Paged KV-cache](doc/paged-cache.md) for implementation details, the cache
 layout, and CUDA benchmark results.
@@ -339,8 +397,7 @@ uv run python -m examples.generation_demo models/qwen3-0.6b
 
 - One active request and batch size one.
 - Synchronous, non-streaming HTTP responses.
-- Reference gather-plus-SDPA paged attention rather than an optimized paged
-  CUDA operator.
+- CUDA paged attention requires the optional pinned vLLM operator group.
 - No prefix sharing, sliding-window eviction, or CPU cache offload.
 - No concurrent batching.
 - Only Qwen3 and Granite 3.1 MoE architectures.
