@@ -312,6 +312,13 @@ class SequenceCacheHandle:
                 f"is {self.capacity}"
             )
 
+    def advance(self, token_count: int) -> None:
+        """Advance host lengths after replaying device-side cache writes."""
+
+        self.ensure_can_append(token_count)
+        length = self.length + token_count
+        self._layer_lengths = [length] * self.pool.num_layers
+
     def reset(self) -> None:
         self._ensure_active()
         self._layer_lengths[:] = [0] * self.pool.num_layers

@@ -200,6 +200,14 @@ class DenseKVCache:
                 f"is {self.capacity}"
             )
 
+    def advance(self, token_count: int) -> None:
+        """Advance host lengths after replaying device-side cache writes."""
+
+        self.ensure_can_append(token_count)
+        length = self.length + token_count
+        for layer in self.layers:
+            layer.length = length
+
     def reset(self) -> None:
         for layer in self.layers:
             layer.reset()

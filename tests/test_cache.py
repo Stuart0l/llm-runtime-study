@@ -117,6 +117,16 @@ class DenseKVCacheTests(unittest.TestCase):
         manager.release(replacement)
         self.assertEqual(manager.used_tokens, 0)
 
+    def test_advance_updates_all_layer_lengths_after_graph_replay(self) -> None:
+        cache = DenseKVCache(
+            _tiny_config(), capacity=3, dtype=torch.float32, device="cpu"
+        )
+
+        cache.advance(1)
+
+        self.assertEqual(cache.length, 1)
+        self.assertTrue(all(layer.length == 1 for layer in cache.layers))
+
 
 class CacheBackendContractTests(unittest.TestCase):
     def _managers(self, capacity: int):
@@ -295,6 +305,10 @@ class PagedKVCachePoolTests(unittest.TestCase):
             config, 4, block_size=2, dtype=torch.float32, device="cpu"
         )
         handle = pool.allocate(4)
+        handle.advance(1)
+        self.assertEqual(handle.length, 1)
+        self.assertTrue(all(layer.length == 1 for layer in handle.layers))
+        handle.reset()
         states = torch.ones(1, 2, 2, 2)
         for layer in handle.layers:
             layer.append(states, states, torch.tensor([[0, 1]]))
