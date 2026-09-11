@@ -5,15 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
-from typing import Iterator, Literal, Sequence
+from typing import Callable, Iterator, Literal, Sequence
 
 import torch
 
 from mini_llm.cache import KVCacheManager, SequenceKVCache
 from mini_llm.cache.dense import DenseKVCacheManager
-from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.cache.paged import PagedKVCachePool, SequenceCacheHandle
 from mini_llm.config import DecoderConfig, load_config
+from mini_llm.cuda_graph import PagedDecodeGraph
 from mini_llm.generation import GenerationEvent, generate as generate_text
+from mini_llm.model.base import CausalLMBase
 from mini_llm.model.contracts import RuntimeCausalLM
 from mini_llm.model.loader import load_model
 from mini_llm.quantization import validate_gptq_marlin_device
@@ -146,6 +148,7 @@ class Engine:
     load_seconds: float
     quantization: str = "dense"
     cache_backend: CacheBackend = "paged"
+    use_cuda_graph: bool = True
     _cache_manager: KVCacheManager | None = field(
         default=None, init=False, repr=False
     )
@@ -166,6 +169,7 @@ class Engine:
         dtype: str | torch.dtype = "auto",
         max_seq_len: int = 4096,
         cache_backend: CacheBackend = "paged",
+        use_cuda_graph: bool = True,
     ) -> "Engine":
         """Select, load, and place one supported checkpoint for inference."""
 
@@ -191,6 +195,7 @@ class Engine:
             load_seconds=0.0,
             quantization=selected_quantization,
             cache_backend=cache_backend,
+            use_cuda_graph=use_cuda_graph,
         )
         engine.to(device=selected_device, dtype=selected_dtype)
         load_seconds = time.perf_counter() - started
@@ -217,7 +222,20 @@ class Engine:
             max_seq_len=self.max_seq_len,
             synchronize=self.synchronize,
             cache_manager=self._ensure_cache_manager(),
+            decode_factory=self._make_decode,
         )
+
+    def _make_decode(
+        self, cache: SequenceKVCache
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
+        if (
+            self.use_cuda_graph
+            and self.device.type == "cuda"
+            and isinstance(cache, SequenceCacheHandle)
+            and isinstance(self.model, CausalLMBase)
+        ):
+            return PagedDecodeGraph(self.model, cache).replay
+        return lambda input_ids: self.model.decode(input_ids, cache=cache)
 
     def _ensure_cache_manager(self) -> KVCacheManager:
         if self._cache_manager is None:

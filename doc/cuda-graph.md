@@ -1,0 +1,115 @@
+# CUDA graph decode
+
+## Scope
+
+`PagedDecodeGraph` captures one complete numerical decode step for a single
+request:
+
+```text
+token embedding -> decoder layers -> paged attention -> final norm -> LM head
+```
+
+The captured graph includes the projection kernels used by the loaded model
+and vLLM's variable-length FlashAttention over the paged KV cache. Token
+sampling, request iteration, input validation, cache allocation, and host-side
+cache bookkeeping remain outside the graph.
+
+CUDA graph replay is enabled by default when all of these conditions hold:
+
+- the engine has `use_cuda_graph=True`;
+- the model and cache are on CUDA;
+- the request uses `SequenceCacheHandle`, the paged-cache implementation; and
+- the model derives from `CausalLMBase`, whose decoder and LM-head operations
+  are captured directly.
+
+Dense caches, CPU, MPS, and alternate runtime-model implementations retain the
+ordinary eager decode path. Set `use_cuda_graph=False` on `Engine` or pass it
+to `Engine.from_model_dir()` to force eager decode while still using the paged
+cache.
+
+## Capture and replay
+
+Generation first prefills the request cache normally. A graph is created
+lazily only if generation needs a decode after the first sampled token. This
+avoids capture for requests that finish immediately because of EOS, the token
+limit, or the context limit.
+
+Capture allocates persistent CUDA tensors for:
+
+- one `[1, 1]` `torch.long` input token;
+- one `[1, 1]` `torch.long` position ID; and
+- the output logits owned by the graph.
+
+The graph records `DecoderModel.forward()` followed by the LM-head projection.
+CUDA capture executes the operations once, so it also writes the placeholder
+token's K/V data into the next cache position. After capture, the runtime rolls
+the host-visible cache length back to its pre-capture value. The placeholder
+device data is harmless because the first replay overwrites the same position.
+
+For every replay, the host performs four small operations:
+
+1. copy the next token into the persistent input tensor;
+2. fill the persistent position tensor from the current cache length;
+3. advance the host-visible cache length by one; and
+4. call `CUDAGraph.replay()`.
+
+The device position tensor makes one captured graph valid across changing
+logical sequence lengths. Each layer uses it both to select the physical cache
+slot for the new K/V values and to pass the effective key length to variable-
+length FlashAttention. The graph therefore keeps fixed tensor shapes and cache
+capacity while attention observes only the valid logical prefix.
+
+Python assignments made by `PagedLayerKVCache.write()` run during capture but
+do not run again during replay. `SequenceCacheHandle.advance()` is consequently
+required to keep the host length synchronized with the device writes. If
+replay raises immediately, the runtime restores the previous host length.
+
+No explicit model warm-up is required before capture. Zero-warm-up correctness
+tests pass for the small dense model and the real GPTQ INT4 and INT8 Qwen
+checkpoints.
+
+The graph and its persistent tensors are request-scoped. Generation releases
+the associated cache on completion, stream closure, or failure. Returned
+logits are graph-owned storage and will be overwritten by the next replay;
+generation consumes them before that happens.
+
+## Decode benchmark
+
+The benchmark isolates model decode from sampling and text processing so it
+measures the kernel-launch reduction directly.
+
+- GPU: NVIDIA GeForce RTX 3070, 8 GiB
+- NVIDIA driver: 580.173.02
+- CUDA: 13.0
+- PyTorch: 2.13.0+cu130
+- Models: Qwen3-0.6B FP16, GPTQ INT8, and GPTQ INT4
+- Cache: paged, with variable-length FlashAttention in both paths
+- Prompt: 32 synthetic tokens
+- Decode: 64 fixed tokens per measured run
+- Warm-up: one unmeasured eight-token request per mode
+- Repetitions: 3
+- Reported values: medians with one device synchronization around each run
+
+Graph construction was measured separately after prefill. The decode timing
+includes the Python replay calls and input copies, but excludes graph capture,
+prefill, token sampling, and tokenizer work.
+
+| Weights | Eager TPOT | Eager tokens/s | Graph TPOT | Graph tokens/s | Speedup | Capture |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| FP16 | 20.3534 ms | 49.13 | 5.8647 ms | 170.51 | 3.470x | 20.50 ms |
+| GPTQ INT8 | 22.1754 ms | 45.09 | 4.7999 ms | 208.34 | 4.620x | 22.38 ms |
+| GPTQ INT4 | 22.0685 ms | 45.31 | 4.2724 ms | 234.06 | 5.165x | 22.41 ms |
+
+Eager GPTQ decode was slightly slower than FP16 because its additional Marlin
+dispatch work was paid for every layer and token. Capturing the complete decode
+removes most repeated CPU launch overhead: INT8 becomes 22% faster than the
+captured FP16 model, and INT4 becomes 37% faster. The remaining graph replay
+time then exposes the lower-cost quantized matrix multiplications.
+
+At these measurements, the roughly 20-22 ms request-local capture cost is
+recovered after two decoded tokens. This crossover excludes sampling overhead
+and is specific to the tested hardware, software versions, model, batch size,
+and sequence lengths. End-to-end serving results can differ because sampling
+and other host work are not captured, and the current implementation captures
+a new graph for every request rather than reusing graphs across cache handles.
+

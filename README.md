@@ -157,6 +157,7 @@ engine = Engine.from_model_dir(
     dtype="auto",
     max_seq_len=4096,
     cache_backend="paged",  # or "dense"
+    use_cuda_graph=True,
 )
 
 for event in engine.generate(
@@ -166,6 +167,9 @@ for event in engine.generate(
 ):
     print(event.text_delta, end="", flush=True)
 ```
+
+Set `use_cuda_graph=False` to keep paged CUDA decoding on the eager path,
+which is useful for correctness and performance comparisons.
 
 Each event contains the new stable text, complete emitted text, token index,
 optional finish reason, and synchronized model-call duration. The first event

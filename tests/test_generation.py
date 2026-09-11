@@ -250,6 +250,35 @@ class GenerationTests(unittest.TestCase):
             "<|im_start|>assistant\n<think>\n\n</think>\n\n",
         )
 
+    def test_creates_request_decoder_only_when_decode_is_needed(self) -> None:
+        model = _FakeModel([2, 3])
+        decoder = MagicMock()
+
+        def make_decoder(cache):
+            decoder.side_effect = lambda input_ids: model.decode(
+                input_ids, cache=cache
+            )
+            return decoder
+
+        decode_factory = MagicMock(side_effect=make_decoder)
+        stream = generate(
+            model,
+            _FakeTokenizer(prompt_ids=[0]),
+            [ChatMessage("user", "question")],
+            max_new_tokens=2,
+            decode_factory=decode_factory,
+        )
+
+        next(stream)
+        decode_factory.assert_not_called()
+        next(stream)
+
+        decode_factory.assert_called_once()
+        decoder.assert_called_once()
+        cache = decode_factory.call_args.args[0]
+        stream.close()
+        self.assertEqual(model.cache_manager.released, [cache])
+
     def test_stops_at_requested_token_limit(self) -> None:
         model = _FakeModel([2, 3, 2])
         events = list(

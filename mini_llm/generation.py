@@ -8,7 +8,7 @@ from typing import Callable, Iterator, Literal, Sequence, TypeVar
 
 import torch
 
-from mini_llm.cache import KVCacheManager
+from mini_llm.cache import KVCacheManager, SequenceKVCache
 from mini_llm.model.contracts import RuntimeCausalLM
 from mini_llm.sampling import SamplingConfig, make_generator, sample_next_token
 from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer
@@ -85,6 +85,9 @@ def generate(
     max_seq_len: int | None = None,
     synchronize: Callable[[], None] | None = None,
     cache_manager: KVCacheManager,
+    decode_factory: (
+        Callable[[SequenceKVCache], Callable[[torch.Tensor], torch.Tensor]] | None
+    ) = None,
 ) -> Iterator[GenerationEvent]:
     """Format complete chat history and return its generation iterator.
 
@@ -140,6 +143,7 @@ def generate(
         random_generator = make_generator(sampling.seed)
         eos_token_ids = set(model.config.eos_token_ids)
         text_decoder = IncrementalTextDecoder(tokenizer)
+        decode: Callable[[torch.Tensor], torch.Tensor] | None = None
 
         try:
             with torch.inference_mode():
@@ -177,9 +181,15 @@ def generate(
                 token_input = torch.tensor(
                     [[token_id]], dtype=torch.long, device=device
                 )
+                if decode is None:
+                    decode = (
+                        decode_factory(cache)
+                        if decode_factory is not None
+                        else lambda input_ids: model.decode(input_ids, cache=cache)
+                    )
                 with torch.inference_mode():
                     logits, model_seconds = _run_model_call(
-                        lambda: model.decode(token_input, cache=cache), synchronize
+                        lambda: decode(token_input), synchronize
                     )
         finally:
             cache_manager.release(cache)

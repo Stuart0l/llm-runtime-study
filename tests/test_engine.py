@@ -9,6 +9,7 @@ import torch
 
 from tests.reference_support import has_local_checkpoint
 
+from mini_llm.cache.paged import SequenceCacheHandle
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
 from mini_llm.engine import (
     Engine,
@@ -18,6 +19,7 @@ from mini_llm.engine import (
     infer_quantization,
     synchronize_device,
 )
+from mini_llm.model.base import CausalLMBase
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage
 
@@ -232,6 +234,28 @@ class EngineTests(unittest.TestCase):
             device=torch.device("cpu"),
         )
 
+    @patch("mini_llm.engine.PagedDecodeGraph")
+    def test_cuda_graph_decode_can_be_disabled(
+        self, paged_decode_graph: MagicMock
+    ) -> None:
+        model = MagicMock(spec=CausalLMBase)
+        engine = Engine(
+            model=model,
+            tokenizer=MagicMock(),
+            device=torch.device("cuda"),
+            dtype=torch.float16,
+            max_seq_len=16,
+            load_seconds=0.0,
+            use_cuda_graph=False,
+        )
+        cache = MagicMock(spec=SequenceCacheHandle)
+        input_ids = torch.tensor([[1]])
+
+        engine._make_decode(cache)(input_ids)
+
+        paged_decode_graph.assert_not_called()
+        model.decode.assert_called_once_with(input_ids, cache=cache)
+
     def test_rejects_unknown_cache_backend(self) -> None:
         with self.assertRaisesRegex(EngineError, "cache backend"):
             Engine(
@@ -298,6 +322,7 @@ class EngineTests(unittest.TestCase):
             max_seq_len=256,
             synchronize=engine.synchronize,
             cache_manager=cache_manager,
+            decode_factory=engine._make_decode,
         )
 
     @patch("mini_llm.engine.synchronize_device")
