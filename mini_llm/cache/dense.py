@@ -143,7 +143,12 @@ class DenseLayerKVCache:
 
 
 class DenseKVCache:
-    """One preallocated :class:`DenseLayerKVCache` for every decoder layer."""
+    """One zero-initialized :class:`DenseLayerKVCache` per decoder layer.
+
+    CUDA graph capture exposes a fixed-size attention bucket beyond the
+    logical cache length. Those masked, unwritten slots must remain finite
+    because SDPA may read them before applying its attention mask.
+    """
 
     def __init__(
         self,
@@ -165,8 +170,8 @@ class DenseKVCache:
         shape = (1, self.num_key_value_heads, capacity, self.head_dim)
         self.layers = [
             DenseLayerKVCache(
-                keys=torch.empty(shape, dtype=dtype, device=self.device),
-                values=torch.empty(shape, dtype=dtype, device=self.device),
+                keys=torch.zeros(shape, dtype=dtype, device=self.device),
+                values=torch.zeros(shape, dtype=dtype, device=self.device),
             )
             for _ in range(config.num_hidden_layers)
         ]

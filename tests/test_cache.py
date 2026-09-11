@@ -98,6 +98,15 @@ class DenseKVCacheTests(unittest.TestCase):
         self.assertEqual(cache.layers[0].keys.shape, (1, 8, 2, 64))
         self.assertEqual(cache.num_bytes, config.kv_cache_bytes(2))
 
+    def test_initializes_unwritten_storage_to_zero(self) -> None:
+        cache = DenseKVCache(
+            _tiny_config(), capacity=3, dtype=torch.float32, device="cpu"
+        )
+
+        for layer in cache.layers:
+            self.assertEqual(torch.count_nonzero(layer.keys).item(), 0)
+            self.assertEqual(torch.count_nonzero(layer.values).item(), 0)
+
     def test_manager_enforces_aggregate_budget_and_releases(self) -> None:
         manager = DenseKVCacheManager(
             _tiny_config(), 6, dtype=torch.float32, device="cpu"
