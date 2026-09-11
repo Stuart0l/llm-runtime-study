@@ -15,6 +15,7 @@ The runtime currently supports:
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
 | Execution | CPU, NVIDIA CUDA, and Apple MPS; batch size one; one active request |
 | Cache | Runtime-owned request caches; paged by default, dense optional |
+| CUDA graphs | Request-local, single-token decode with the paged CUDA cache |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
 ### Platform support
@@ -33,7 +34,7 @@ implementations. Quantized execution uses FP16 activations.
 | Dense KV cache | Contiguous SDPA | Contiguous SDPA | Contiguous SDPA |
 | Paged KV cache | Gather + SDPA | Gather + SDPA | Direct block-table FlashAttention |
 | Granite MoE dispatch | Active-expert loop | Batched prefill and gathered decode | Batched prefill and gathered decode |
-| CUDA graph decode | Not applicable | Not applicable | Attention components verified; end-to-end engine replay not yet integrated |
+| CUDA graph decode | Not applicable | Not applicable | End-to-end batch-one decode with the paged cache; dense cache remains eager |
 | Sampling, CLI, and HTTP API | Supported | Supported | Supported |
 
 ## Setup
@@ -325,6 +326,14 @@ available for comparison.
 
 See [Paged KV-cache](doc/paged-cache.md) for implementation details, the cache
 layout, and CUDA benchmark results.
+
+### CUDA graph decode
+
+On CUDA, `Engine` captures complete single-token decode with the default paged
+cache. Prefill, sampling, validation, and request management remain eager.
+
+See [CUDA graph decode](doc/cuda-graph.md) for the capture lifecycle,
+correctness constraints, and FP16, GPTQ INT8, and GPTQ INT4 measurements.
 
 ## Benchmarks
 
