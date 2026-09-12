@@ -101,7 +101,7 @@ def run_transformers(
     ).eval()
     with torch.inference_mode():
         prefill = model(input_ids=input_ids, use_cache=True)
-        prefill_logits = prefill.logits.float().clone()
+        prefill_logits = prefill.logits[:, -1:].float().clone()
         token_ids = [int(prefill_logits[0, -1].argmax())]
         past_key_values = prefill.past_key_values
         decode_logits = []

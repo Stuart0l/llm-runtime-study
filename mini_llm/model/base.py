@@ -165,11 +165,35 @@ class CausalLMBase(nn.Module):
         *,
         cache: SequenceKVCache,
     ) -> torch.Tensor:
-        """Reset one explicit request cache, write its prompt, and return logits."""
+        """Reset one request cache and return its final-position logits."""
 
         self._validate_cache(cache)
         cache.reset()
-        return self._cached_forward(input_ids, cache)
+        self._validate_input_ids(input_ids)
+        if input_ids.shape[0] != 1:
+            raise ValueError("prefill supports batch size one only")
+        sequence_length = input_ids.shape[1]
+        cache.ensure_can_append(sequence_length)
+        position_ids = build_position_ids(
+            sequence_length,
+            device=input_ids.device,
+        )
+        try:
+            hidden_states = self.model(
+                input_ids,
+                position_ids=position_ids,
+                layer_caches=cache.layers,
+            )
+            if cache.length != sequence_length:
+                raise RuntimeError(
+                    f"KV cache length should be {sequence_length}, "
+                    f"got {cache.length}"
+                )
+            # Only the final hidden state predicts the first generated token.
+            return self._project_logits(hidden_states[:, -1:, :])
+        except Exception:
+            cache.rollback(0)
+            raise
 
     def decode(
         self,
@@ -230,39 +254,6 @@ class CausalLMBase(nn.Module):
         except Exception:
             for cache, previous_length in zip(caches, previous_lengths):
                 cache.rollback(previous_length)
-            raise
-
-    def _cached_forward(
-        self, input_ids: torch.Tensor, cache: SequenceKVCache
-    ) -> torch.Tensor:
-        """Run one cached forward pass through a backend-neutral cache view."""
-
-        self._validate_input_ids(input_ids)
-        if input_ids.shape[0] != 1:
-            raise ValueError("v1 cached execution supports batch size one only")
-        sequence_length = input_ids.shape[1]
-        cache.ensure_can_append(sequence_length)
-        past_length = cache.length
-        position_ids = build_position_ids(
-            sequence_length,
-            offset=past_length,
-            device=input_ids.device,
-        )
-        try:
-            hidden_states = self.model(
-                input_ids,
-                position_ids=position_ids,
-                layer_caches=cache.layers,
-            )
-            expected_length = past_length + sequence_length
-            if cache.length != expected_length:
-                raise RuntimeError(
-                    f"KV cache length should be {expected_length}, "
-                    f"got {cache.length}"
-                )
-            return self._project_logits(hidden_states)
-        except Exception:
-            cache.rollback(past_length)
             raise
 
     def _validate_cache(self, cache: SequenceKVCache) -> None:

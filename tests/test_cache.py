@@ -161,7 +161,7 @@ class CacheBackendContractTests(unittest.TestCase):
                     prefill = model.prefill(tokens[:, :3], cache=cache)
                     decode_1 = model.decode(tokens[:, 3:4], caches=(cache,))
                     decode_2 = model.decode(tokens[:, 4:5], caches=(cache,))
-                    torch.testing.assert_close(prefill, reference[:, :3])
+                    torch.testing.assert_close(prefill, reference[:, 2:3])
                     torch.testing.assert_close(decode_1, reference[:, 3:4])
                     torch.testing.assert_close(decode_2, reference[:, 4:5])
                     self.assertEqual(cache.length, 5)
@@ -195,21 +195,6 @@ class CacheBackendContractTests(unittest.TestCase):
                     self.assertEqual(second_cache.length, 5)
                     manager.release(first_cache)
                     manager.release(second_cache)
-
-    def test_chunked_append_matches_uncached_for_both_backends(self) -> None:
-        torch.manual_seed(29)
-        model = Qwen3ForCausalLM(_tiny_config()).eval()
-        tokens = torch.tensor([[1, 4, 7, 9]])
-        with torch.inference_mode():
-            reference = model(tokens)
-            for manager in self._managers(4):
-                with self.subTest(manager=type(manager).__name__):
-                    cache = manager.allocate(4)
-                    first = model.prefill(tokens[:, :2], cache=cache)
-                    second = model._cached_forward(tokens[:, 2:], cache)
-                    torch.testing.assert_close(first, reference[:, :2])
-                    torch.testing.assert_close(second, reference[:, 2:])
-                    manager.release(cache)
 
     def test_overflow_is_checked_before_any_layer_is_modified(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
@@ -395,8 +380,8 @@ class PagedKVCachePoolTests(unittest.TestCase):
             second_prefill = model.prefill(second_tokens[:, :2], cache=second)
             first_decode = model.decode(first_tokens[:, 3:], caches=(first,))
             second_decode = model.decode(second_tokens[:, 2:], caches=(second,))
-        torch.testing.assert_close(first_prefill, first_reference[:, :3])
-        torch.testing.assert_close(second_prefill, second_reference[:, :2])
+        torch.testing.assert_close(first_prefill, first_reference[:, 2:3])
+        torch.testing.assert_close(second_prefill, second_reference[:, 1:2])
         torch.testing.assert_close(first_decode, first_reference[:, 3:])
         torch.testing.assert_close(second_decode, second_reference[:, 2:])
         self.assertTrue(
