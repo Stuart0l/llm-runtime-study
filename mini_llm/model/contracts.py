@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, Sequence
 
 import torch
 
@@ -23,7 +23,10 @@ class RuntimeCausalLM(Protocol):
     ) -> torch.Tensor: ...
 
     def decode(
-        self, input_ids: torch.Tensor, *, cache: SequenceKVCache
+        self,
+        input_ids: torch.Tensor,
+        *,
+        caches: Sequence[SequenceKVCache],
     ) -> torch.Tensor: ...
 
     def requires_grad_(self, requires_grad: bool = True) -> "RuntimeCausalLM": ...

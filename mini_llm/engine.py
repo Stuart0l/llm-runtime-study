@@ -243,7 +243,7 @@ class Engine:
             else:
                 self._decode_graph.cache.bind(cache)
             return self._decode_graph.replay
-        return lambda input_ids: self.model.decode(input_ids, cache=cache)
+        return lambda input_ids: self.model.decode(input_ids, caches=(cache,))
 
     def _ensure_cache_manager(self) -> KVCacheManager:
         if self._cache_manager is None:

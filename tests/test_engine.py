@@ -254,7 +254,7 @@ class EngineTests(unittest.TestCase):
         engine._make_decode(cache)(input_ids)
 
         paged_decode_graph.assert_not_called()
-        model.decode.assert_called_once_with(input_ids, cache=cache)
+        model.decode.assert_called_once_with(input_ids, caches=(cache,))
 
     @patch("mini_llm.engine.PagedDecodeGraph")
     def test_reuses_decode_graph_across_block_counts(

@@ -222,9 +222,8 @@ class GroupedQueryAttention(nn.Module):
                 keys, values = cache.append(keys, values, position_ids)
                 key_positions = torch.arange(keys.shape[2], device=inputs.device)
                 attention_mask = (
-                    key_positions.unsqueeze(0)
-                    <= position_ids.flatten().unsqueeze(1)
-                )
+                    key_positions.view(1, 1, -1) <= position_ids.unsqueeze(-1)
+                ).unsqueeze(1)
                 is_causal = False
 
             keys = repeat_kv_heads(keys, self.queries_per_kv_head)

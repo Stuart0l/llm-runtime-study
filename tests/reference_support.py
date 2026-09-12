@@ -69,7 +69,9 @@ def run_mini_runtime(
                 token_input = torch.tensor(
                     [[token_ids[-1]]], dtype=torch.long, device=model.input_device
                 )
-                logits = model.decode(token_input, cache=cache).float().clone()
+                logits = model.decode(
+                    token_input, caches=(cache,)
+                ).float().clone()
                 decode_logits.append(logits)
                 token_ids.append(int(logits[0, -1].argmax()))
     finally:

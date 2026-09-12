@@ -159,7 +159,7 @@ class _FakeModel(nn.Module):
         self.prefill_calls += 1
         return self._logits(self.next_tokens[0], input_ids.shape[1])
 
-    def decode(self, input_ids: torch.Tensor, *, cache: object) -> torch.Tensor:
+    def decode(self, input_ids: torch.Tensor, *, caches: object) -> torch.Tensor:
         self.decode_inputs.append(int(input_ids.item()))
         return self._logits(self.next_tokens[len(self.decode_inputs)], 1)
 
@@ -256,7 +256,7 @@ class GenerationTests(unittest.TestCase):
 
         def make_decoder(cache):
             decoder.side_effect = lambda input_ids: model.decode(
-                input_ids, cache=cache
+                input_ids, caches=(cache,)
             )
             return decoder
 

@@ -185,7 +185,9 @@ def generate(
                     decode = (
                         decode_factory(cache)
                         if decode_factory is not None
-                        else lambda input_ids: model.decode(input_ids, cache=cache)
+                        else lambda input_ids: model.decode(
+                            input_ids, caches=(cache,)
+                        )
                     )
                 with torch.inference_mode():
                     logits, model_seconds = _run_model_call(

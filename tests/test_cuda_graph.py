@@ -35,7 +35,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
             for token in (7, 8):
                 token_input = torch.tensor([[token]], device="cuda")
                 actual = graph.replay(token_input).clone()
-                expected = model.decode(token_input, cache=eager_cache)
+                expected = model.decode(token_input, caches=(eager_cache,))
                 torch.testing.assert_close(actual, expected)
 
         self.assertEqual(replay_cache.length, 4)
@@ -61,7 +61,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
             for token in (6, 9):
                 token_input = torch.tensor([[token]], device="cuda")
                 actual = graph.replay(token_input).clone()
-                expected = model.decode(token_input, cache=eager_cache)
+                expected = model.decode(token_input, caches=(eager_cache,))
                 torch.testing.assert_close(actual, expected)
 
         pool.release(reserved_cache)
@@ -99,7 +99,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
                         model.prefill(prompt, cache=eager_cache)
                         graph = PagedDecodeGraph(model, replay_cache)
                         actual = graph.replay(token).clone()
-                        expected = model.decode(token, cache=eager_cache)
+                        expected = model.decode(token, caches=(eager_cache,))
                     torch.testing.assert_close(actual, expected)
                 finally:
                     del graph, replay_cache, eager_cache, pool

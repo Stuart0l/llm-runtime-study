@@ -162,8 +162,8 @@ class GraniteMoeForCausalLMTests(unittest.TestCase):
         cache = manager.allocate(input_ids.shape[1])
 
         prefill = model.prefill(input_ids[:, :2], cache=cache)
-        first_decode = model.decode(input_ids[:, 2:3], cache=cache)
-        second_decode = model.decode(input_ids[:, 3:4], cache=cache)
+        first_decode = model.decode(input_ids[:, 2:3], caches=(cache,))
+        second_decode = model.decode(input_ids[:, 3:4], caches=(cache,))
 
         torch.testing.assert_close(prefill, reference[:, :2])
         torch.testing.assert_close(first_decode, reference[:, 2:3])

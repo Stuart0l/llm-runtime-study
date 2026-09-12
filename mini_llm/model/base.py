@@ -10,6 +10,7 @@ import torch
 from torch import nn
 
 from mini_llm.cache import LayerKVCache, SequenceKVCache
+from mini_llm.cache.batch import PaddedBatchLayerKVCache
 from mini_llm.checkpoint import (
     CheckpointValidationError,
     SafeTensorCheckpoint,
@@ -174,19 +175,62 @@ class CausalLMBase(nn.Module):
         self,
         input_ids: torch.Tensor,
         *,
-        cache: SequenceKVCache,
+        caches: Sequence[SequenceKVCache],
     ) -> torch.Tensor:
-        """Append exactly one token to one explicit request cache."""
+        """Decode one token per request, including a one-request batch."""
 
-        self._validate_cache(cache)
-        if cache.length == 0:
-            raise RuntimeError("call prefill(input_ids) before decode")
-        if input_ids.ndim != 2 or input_ids.shape != (1, 1):
+        self._validate_input_ids(input_ids)
+        if input_ids.shape[1] != 1:
             raise ValueError(
-                "decode input_ids must have shape [1, 1], got "
+                "decode input_ids must have shape [batch, 1], got "
                 f"{tuple(input_ids.shape)}"
             )
-        return self._cached_forward(input_ids, cache)
+        if input_ids.shape[0] != len(caches):
+            raise ValueError(
+                f"input batch size {input_ids.shape[0]} does not match "
+                f"{len(caches)} caches"
+            )
+
+        previous_lengths = []
+        for cache in caches:
+            self._validate_cache(cache)
+            if cache.length == 0:
+                raise RuntimeError("prefill every cache before batched decode")
+            cache.ensure_can_append(1)
+            previous_lengths.append(cache.length)
+
+        position_ids = torch.tensor(
+            previous_lengths, dtype=torch.long, device=input_ids.device
+        ).unsqueeze(1)
+        if len(caches) == 1:
+            # Preserve the concrete paged layer so CUDA attention can select
+            # its direct varlen kernel instead of the gathered SDPA fallback.
+            layer_caches = caches[0].layers
+        else:
+            layer_caches = [
+                PaddedBatchLayerKVCache(
+                    [cache.layers[layer_index] for cache in caches]
+                )
+                for layer_index in range(self.config.num_hidden_layers)
+            ]
+        try:
+            hidden_states = self.model(
+                input_ids,
+                position_ids=position_ids,
+                layer_caches=layer_caches,
+            )
+            for cache, previous_length in zip(caches, previous_lengths):
+                expected_length = previous_length + 1
+                if cache.length != expected_length:
+                    raise RuntimeError(
+                        f"KV cache length should be {expected_length}, "
+                        f"got {cache.length}"
+                    )
+            return self._project_logits(hidden_states)
+        except Exception:
+            for cache, previous_length in zip(caches, previous_lengths):
+                cache.rollback(previous_length)
+            raise
 
     def _cached_forward(
         self, input_ids: torch.Tensor, cache: SequenceKVCache
