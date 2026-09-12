@@ -111,14 +111,14 @@ def _run_prompt(
 
     generation_started = time.perf_counter()
     stream = engine.generate(
-        [ChatMessage(role="user", content=prompt)],
+        ([ChatMessage(role="user", content=prompt)],),
         max_new_tokens=args.max_new_tokens,
         sampling=sampling,
         enable_thinking=args.thinking,
     )
     events: list[GenerationEvent] = []
     first_token_finished: float | None = None
-    for event in stream:
+    for _, event in stream:
         if first_token_finished is None:
             first_token_finished = time.perf_counter()
         events.append(event)

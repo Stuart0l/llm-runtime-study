@@ -22,6 +22,7 @@ def _args(**overrides: object) -> Namespace:
         "warmups": 0,
         "repeats": 1,
         "decode_tokens": 1,
+        "batch_size": 1,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -54,7 +55,11 @@ class QuantizedBenchmarkTests(unittest.TestCase):
             run(_args(), output=StringIO())
 
         from_model_dir.assert_called_once_with(
-            Path("qwen-gptq"), device="cuda", dtype="float16", max_seq_len=97
+            Path("qwen-gptq"),
+            device="cuda",
+            dtype="float16",
+            max_seq_len=97,
+            max_batch_size=1,
         )
         engine.to.assert_not_called()
 

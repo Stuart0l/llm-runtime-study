@@ -138,7 +138,7 @@ def synchronize_device(device: torch.device) -> None:
 
 @dataclass(slots=True)
 class Engine:
-    """Loaded model, tokenizer, placement policy, and one-request runtime."""
+    """Loaded model, tokenizer, placement policy, and generation runtime."""
 
     model: RuntimeCausalLM
     tokenizer: RuntimeTokenizer
@@ -146,6 +146,7 @@ class Engine:
     dtype: torch.dtype
     max_seq_len: int
     load_seconds: float
+    max_batch_size: int = 1
     quantization: str = "dense"
     cache_backend: CacheBackend = "paged"
     use_cuda_graph: bool = True
@@ -157,6 +158,8 @@ class Engine:
     )
 
     def __post_init__(self) -> None:
+        if self.max_batch_size <= 0:
+            raise EngineError("max_batch_size must be positive")
         if self.cache_backend not in ("paged", "dense"):
             raise EngineError(
                 f"unsupported cache backend {self.cache_backend!r}; "
@@ -171,6 +174,7 @@ class Engine:
         device: str | torch.device = "auto",
         dtype: str | torch.dtype = "auto",
         max_seq_len: int = 4096,
+        max_batch_size: int = 1,
         cache_backend: CacheBackend = "paged",
         use_cuda_graph: bool = True,
     ) -> "Engine":
@@ -196,6 +200,7 @@ class Engine:
             dtype=loaded_parameter.dtype,
             max_seq_len=max_seq_len,
             load_seconds=0.0,
+            max_batch_size=max_batch_size,
             quantization=selected_quantization,
             cache_backend=cache_backend,
             use_cuda_graph=use_cuda_graph,
@@ -207,18 +212,24 @@ class Engine:
 
     def generate(
         self,
-        messages: Sequence[ChatMessage],
+        message_batches: Sequence[Sequence[ChatMessage]],
         *,
         max_new_tokens: int,
         sampling: SamplingConfig = SamplingConfig(),
         enable_thinking: bool = False,
-    ) -> Iterator[GenerationEvent]:
-        """Format complete chat history and stream generated text."""
+    ) -> Iterator[tuple[int, GenerationEvent]]:
+        """Generate one or more request message lists."""
+
+        if len(message_batches) > self.max_batch_size:
+            raise EngineError(
+                f"batch size {len(message_batches)} exceeds engine maximum "
+                f"{self.max_batch_size}"
+            )
 
         return generate_text(
             self.model,
             self.tokenizer,
-            messages,
+            message_batches,
             max_new_tokens=max_new_tokens,
             sampling=sampling,
             enable_thinking=enable_thinking,
@@ -254,7 +265,7 @@ class Engine:
             )
             self._cache_manager = manager_type(
                 self.model.config,
-                self.max_seq_len,
+                self.max_seq_len * self.max_batch_size,
                 dtype=self.dtype,
                 device=self.device,
             )

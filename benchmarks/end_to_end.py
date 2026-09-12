@@ -16,12 +16,13 @@ from benchmarks.common import PromptCase
 
 HEADERS = (
     "device",
-    "prompt",
+    "batch",
+    "prompt/request",
     "TTFT",
     "prefill tok/s",
     "decode TPOT",
     "decode tok/s",
-    "generated",
+    "generated total",
     "cache",
 )
 
@@ -35,9 +36,11 @@ class _Run:
     decode_seconds: float
 
 
-def _run_once(engine: Engine, prompt: str, decode_tokens: int) -> _Run:
+def _run_once(
+    engine: Engine, prompt: str, decode_tokens: int, batch_size: int
+) -> _Run:
     stream = engine.generate(
-        [ChatMessage("user", prompt)],
+        tuple([ChatMessage("user", prompt)] for _ in range(batch_size)),
         max_new_tokens=decode_tokens,
         sampling=SamplingConfig(temperature=0),
     )
@@ -46,15 +49,26 @@ def _run_once(engine: Engine, prompt: str, decode_tokens: int) -> _Run:
     first_finished = time.perf_counter()
     events = [first]
     events.extend(stream)
-    prompt_tokens = first.prompt_token_count
-    if prompt_tokens is None or first.model_seconds is None:
+    prompt_tokens = sum(
+        event.prompt_token_count or 0 for _, event in events
+    )
+    prefill_seconds = sum(
+        event.model_seconds or 0.0
+        for _, event in events
+        if event.token_index == 0
+    )
+    if prompt_tokens == 0 or prefill_seconds == 0:
         raise RuntimeError("generation did not report synchronized prefill metrics")
+    decode_seconds_by_step = {}
+    for _, event in events:
+        if event.token_index is not None and event.token_index > 0:
+            decode_seconds_by_step.setdefault(event.token_index, event.model_seconds)
     return _Run(
         prompt_tokens=prompt_tokens,
-        generated_tokens=sum(event.token_id is not None for event in events),
+        generated_tokens=sum(event.token_id is not None for _, event in events),
         ttft=first_finished - started,
-        prefill_seconds=first.model_seconds,
-        decode_seconds=sum(event.model_seconds or 0.0 for event in events[1:]),
+        prefill_seconds=prefill_seconds,
+        decode_seconds=sum(value or 0.0 for value in decode_seconds_by_step.values()),
     )
 
 
@@ -65,22 +79,27 @@ def run(
     warmups: int,
     repeats: int,
     decode_tokens: int,
+    batch_size: int,
 ) -> list[tuple[str, ...]]:
     """Benchmark normal Engine generation without loading another model."""
 
     rows: list[tuple[str, ...]] = []
+    if batch_size <= 0:
+        raise ValueError(f"batch size must be positive, got {batch_size}")
     for case in cases:
         for _ in range(warmups):
-            _run_once(engine, case.prompt, decode_tokens)
+            _run_once(engine, case.prompt, decode_tokens, batch_size)
         runs = tuple(
-            _run_once(engine, case.prompt, decode_tokens)
+            _run_once(engine, case.prompt, decode_tokens, batch_size)
             for _ in range(repeats)
         )
         prompt_tokens = runs[0].prompt_tokens
         generated_tokens = runs[0].generated_tokens
         ttft = median(run.ttft for run in runs)
         prefill_seconds = median(run.prefill_seconds for run in runs)
-        decode_counts = [max(0, run.generated_tokens - 1) for run in runs]
+        decode_counts = [
+            max(0, run.generated_tokens - batch_size) for run in runs
+        ]
         decode_tpots = [
             run.decode_seconds / count
             for run, count in zip(runs, decode_counts)
@@ -90,13 +109,14 @@ def run(
         rows.append(
             (
                 engine.device.type,
-                str(prompt_tokens),
+                str(batch_size),
+                str(prompt_tokens // batch_size),
                 f"{ttft * 1_000:.2f} ms",
                 f"{prompt_tokens / prefill_seconds:.2f}",
                 "n/a" if decode_tpot is None else f"{decode_tpot * 1_000:.2f} ms",
                 "n/a" if decode_tpot is None else f"{1 / decode_tpot:.2f}",
                 str(generated_tokens),
-                f"{engine.last_cache_num_bytes / (1024**2):.2f} MiB",
+                f"{engine.last_cache_num_bytes * batch_size / (1024**2):.2f} MiB",
             )
         )
     return rows

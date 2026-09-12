@@ -9,9 +9,10 @@ import unittest
 
 import torch
 
-from benchmarks import cache_decode
+from benchmarks import cache_decode, end_to_end
 from benchmarks.__main__ import BenchmarkError, _selected_devices, run
 from benchmarks.common import PromptCase, measure, render_table
+from mini_llm.generation import GenerationEvent
 
 
 class MeasurementTests(unittest.TestCase):
@@ -82,6 +83,70 @@ class CacheDecodeBenchmarkTests(unittest.TestCase):
         self.assertIn("cached speedup", cache_decode.HEADERS)
 
 
+class EndToEndBenchmarkTests(unittest.TestCase):
+    def test_batch_size_controls_requests_and_aggregate_decode_throughput(
+        self,
+    ) -> None:
+        engine = MagicMock()
+        engine.device = torch.device("cpu")
+        engine.last_cache_num_bytes = 1024**2
+        engine.generate.return_value = iter(
+            (
+                (
+                    0,
+                    GenerationEvent(
+                        2, 0, "", "", model_seconds=0.1, prompt_token_count=3
+                    ),
+                ),
+                (
+                    1,
+                    GenerationEvent(
+                        2, 0, "", "", model_seconds=0.2, prompt_token_count=3
+                    ),
+                ),
+                (
+                    0,
+                    GenerationEvent(
+                        3,
+                        1,
+                        "",
+                        "",
+                        model_seconds=0.05,
+                        finish_reason="max_new_tokens",
+                    ),
+                ),
+                (
+                    1,
+                    GenerationEvent(
+                        3,
+                        1,
+                        "",
+                        "",
+                        model_seconds=0.05,
+                        finish_reason="max_new_tokens",
+                    ),
+                ),
+            )
+        )
+
+        with patch(
+            "benchmarks.end_to_end.time.perf_counter", side_effect=[1.0, 1.1]
+        ):
+            rows = end_to_end.run(
+                engine,
+                [PromptCase(3, "prompt", (1, 2, 3))],
+                warmups=0,
+                repeats=1,
+                decode_tokens=2,
+                batch_size=2,
+            )
+
+        self.assertEqual(len(engine.generate.call_args.args[0]), 2)
+        self.assertEqual(rows[0][1:3], ("2", "3"))
+        self.assertEqual(rows[0][5:8], ("25.00 ms", "40.00", "4"))
+        self.assertEqual(rows[0][-1], "2.00 MiB")
+
+
 class RunnerTests(unittest.TestCase):
     def _args(self, **overrides: object) -> Namespace:
         values = {
@@ -92,6 +157,7 @@ class RunnerTests(unittest.TestCase):
             "warmups": 0,
             "repeats": 1,
             "decode_tokens": 1,
+            "batch_size": 1,
         }
         values.update(overrides)
         return Namespace(**values)
@@ -148,6 +214,7 @@ class RunnerTests(unittest.TestCase):
             device="cpu",
             dtype="float16",
             max_seq_len=97,
+            max_batch_size=1,
         )
         engine.to.assert_called_once_with(device="mps")
         self.assertEqual(cache_run.call_count, 2)
@@ -168,6 +235,8 @@ class RunnerTests(unittest.TestCase):
         for suite in (cache_run, moe_run, end_to_end_run):
             self.assertIs(suite.call_args_list[0].args[0], engine)
             self.assertIs(suite.call_args_list[1].args[0], engine)
+        for call in end_to_end_run.call_args_list:
+            self.assertEqual(call.kwargs["batch_size"], 1)
 
     def test_default_devices_include_available_mps(self) -> None:
         with (

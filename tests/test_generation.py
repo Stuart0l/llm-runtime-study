@@ -164,17 +164,105 @@ class _FakeModel(nn.Module):
         return self._logits(self.next_tokens[len(self.decode_inputs)], 1)
 
 
+class _BatchTokenizer(_FakeTokenizer):
+    def encode(self, text: str) -> list[int]:
+        return [0] if "first" in text else [1]
+
+
+class _FakeBatchModel(_FakeModel):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.decode_batches: list[list[int]] = []
+
+    def prefill(self, input_ids: torch.Tensor, *, cache: object) -> torch.Tensor:
+        self.prefill_calls += 1
+        next_token = 2 if int(input_ids[0, -1]) == 0 else 3
+        return self._logits(next_token, input_ids.shape[1])
+
+    def decode(self, input_ids: torch.Tensor, *, caches: object) -> torch.Tensor:
+        token_ids = input_ids.flatten().tolist()
+        self.decode_batches.append(token_ids)
+        next_tokens = [4 if token_id == 2 else 2 for token_id in token_ids]
+        return torch.cat([self._logits(token_id, 1) for token_id in next_tokens])
+
+
 def generate(model, tokenizer, messages, **kwargs):
-    return generate_text(
+    batch_events = generate_text(
         model,
         tokenizer,
-        messages,
+        (messages,),
         cache_manager=model.cache_manager,
         **kwargs,
     )
 
+    def iterate():
+        try:
+            for _, event in batch_events:
+                yield event
+        finally:
+            batch_events.close()
+
+    return iterate()
+
 
 class GenerationTests(unittest.TestCase):
+    def test_padded_batch_compacts_after_one_request_reaches_eos(self) -> None:
+        model = _FakeBatchModel()
+        events = list(
+            generate_text(
+                model,
+                _BatchTokenizer(),
+                (
+                    [ChatMessage("user", "first")],
+                    [ChatMessage("user", "second")],
+                ),
+                max_new_tokens=4,
+                sampling=SamplingConfig(temperature=0),
+                cache_manager=model.cache_manager,
+            )
+        )
+
+        by_request = [[], []]
+        for request_index, event in events:
+            by_request[request_index].append(event)
+
+        self.assertEqual(
+            [[event.token_id for event in request] for request in by_request],
+            [[2, 4], [3, 2, 4]],
+        )
+        self.assertTrue(
+            all(request[-1].finish_reason == "eos" for request in by_request)
+        )
+        self.assertEqual(model.prefill_calls, 2)
+        self.assertEqual(model.decode_batches, [[2, 3], [2]])
+        self.assertEqual(len(model.cache_manager.released), 2)
+
+    def test_batch_prefill_failure_releases_every_allocated_cache(self) -> None:
+        model = _FakeBatchModel()
+        original_prefill = model.prefill
+
+        def fail_second_prefill(input_ids, *, cache):
+            if int(input_ids[0, -1]) == 1:
+                raise RuntimeError("prefill failed")
+            return original_prefill(input_ids, cache=cache)
+
+        model.prefill = fail_second_prefill
+        stream = generate_text(
+            model,
+            _BatchTokenizer(),
+            (
+                [ChatMessage("user", "first")],
+                [ChatMessage("user", "second")],
+            ),
+            max_new_tokens=2,
+            cache_manager=model.cache_manager,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "prefill failed"):
+            list(stream)
+
+        self.assertEqual(len(model.cache_manager.released), 2)
+
     def test_formats_complete_chat_history_before_iteration(self) -> None:
         model = _FakeModel([2, 4])
         tokenizer = _FakeTokenizer()

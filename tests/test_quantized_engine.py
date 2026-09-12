@@ -170,13 +170,13 @@ class QuantizedEngineTests(unittest.TestCase):
                 try:
                     events = list(
                         engine.generate(
-                            [ChatMessage("user", "Say hello.")], max_new_tokens=2
+                            ([ChatMessage("user", "Say hello.")],), max_new_tokens=2
                         )
                     )
                     first_graph = engine._decode_graph
                     repeated_events = list(
                         engine.generate(
-                            [ChatMessage("user", "Say hello.")], max_new_tokens=2
+                            ([ChatMessage("user", "Say hello.")],), max_new_tokens=2
                         )
                     )
 
@@ -190,8 +190,8 @@ class QuantizedEngineTests(unittest.TestCase):
                     self.assertTrue(events)
                     self.assertIsNotNone(first_graph)
                     self.assertEqual(
-                        [event.token_id for event in repeated_events],
-                        [event.token_id for event in events],
+                        [event.token_id for _, event in repeated_events],
+                        [event.token_id for _, event in events],
                     )
                     self.assertIs(engine._decode_graph, first_graph)
                     self.assertEqual(engine.cache_manager.active_sequences, 0)

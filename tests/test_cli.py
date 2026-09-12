@@ -38,27 +38,33 @@ class CLITests(unittest.TestCase):
         engine.generate.side_effect = [
             iter(
                 [
-                    GenerationEvent(
-                        2,
+                    (
                         0,
-                        "First answer",
-                        "First answer",
-                        finish_reason="eos",
-                        model_seconds=0.1,
-                        prompt_token_count=3,
+                        GenerationEvent(
+                            2,
+                            0,
+                            "First answer",
+                            "First answer",
+                            finish_reason="eos",
+                            model_seconds=0.1,
+                            prompt_token_count=3,
+                        ),
                     )
                 ]
             ),
             iter(
                 [
-                    GenerationEvent(
-                        3,
+                    (
                         0,
-                        "Second answer",
-                        "Second answer",
-                        finish_reason="eos",
-                        model_seconds=0.1,
-                        prompt_token_count=4,
+                        GenerationEvent(
+                            3,
+                            0,
+                            "Second answer",
+                            "Second answer",
+                            finish_reason="eos",
+                            model_seconds=0.1,
+                            prompt_token_count=4,
+                        ),
                     )
                 ]
             ),
@@ -81,8 +87,8 @@ class CLITests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in engine.generate.call_args_list],
             [
-                [ChatMessage("user", "first prompt")],
-                [ChatMessage("user", "second prompt")],
+                ([ChatMessage("user", "first prompt")],),
+                ([ChatMessage("user", "second prompt")],),
             ],
         )
         rendered = output.getvalue()
@@ -114,21 +120,27 @@ class CLITests(unittest.TestCase):
         engine.last_cache_capacity = 16
         engine.generate.return_value = iter(
             [
-                GenerationEvent(
-                    2,
+                (
                     0,
-                    "Hello",
-                    "Hello",
-                    model_seconds=0.20,
-                    prompt_token_count=9,
+                    GenerationEvent(
+                        2,
+                        0,
+                        "Hello",
+                        "Hello",
+                        model_seconds=0.20,
+                        prompt_token_count=9,
+                    ),
                 ),
-                GenerationEvent(
-                    3,
-                    1,
-                    " world",
-                    "Hello world",
-                    finish_reason="max_new_tokens",
-                    model_seconds=0.05,
+                (
+                    0,
+                    GenerationEvent(
+                        3,
+                        1,
+                        " world",
+                        "Hello world",
+                        finish_reason="max_new_tokens",
+                        model_seconds=0.05,
+                    ),
                 ),
             ]
         )
@@ -194,21 +206,27 @@ class CLITests(unittest.TestCase):
         engine = MagicMock()
         engine.generate.return_value = iter(
             [
-                GenerationEvent(
-                    2,
+                (
                     0,
-                    "A",
-                    "A",
-                    model_seconds=0.1,
-                    prompt_token_count=2,
+                    GenerationEvent(
+                        2,
+                        0,
+                        "A",
+                        "A",
+                        model_seconds=0.1,
+                        prompt_token_count=2,
+                    ),
                 ),
-                GenerationEvent(
-                    3,
-                    1,
-                    "B",
-                    "AB",
-                    finish_reason="eos",
-                    model_seconds=0.1,
+                (
+                    0,
+                    GenerationEvent(
+                        3,
+                        1,
+                        "B",
+                        "AB",
+                        finish_reason="eos",
+                        model_seconds=0.1,
+                    ),
                 ),
             ]
         )

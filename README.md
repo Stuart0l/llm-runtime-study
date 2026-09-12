@@ -13,7 +13,7 @@ The runtime currently supports:
 | Checkpoints | Single-file and indexed sharded Safetensors |
 | Tokenization | Local `tokenizer.json` through `tokenizers` |
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
-| Execution | CPU, NVIDIA CUDA, and Apple MPS; batch size one; one active request |
+| Execution | CPU, NVIDIA CUDA, and Apple MPS; static padded request batches |
 | Cache | Runtime-owned request caches; paged by default, dense optional |
 | CUDA graphs | Reusable single-token decode with the paged CUDA cache |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
@@ -161,8 +161,8 @@ engine = Engine.from_model_dir(
     use_cuda_graph=True,
 )
 
-for event in engine.generate(
-    [ChatMessage("user", "Explain what a KV cache does.")],
+for request_index, event in engine.generate(
+    ([ChatMessage("user", "Explain what a KV cache does.")],),
     max_new_tokens=64,
     sampling=SamplingConfig(temperature=0),
 ):
@@ -290,7 +290,8 @@ The runtime has two implementations of that same attention operation:
 
 - **Regular PyTorch SDPA:** consumes contiguous
   `[batch, heads, tokens, head_dim]` tensors. The runtime repeats K/V heads for
-  GQA and supplies an absolute-position causal mask during cached execution.
+  GQA, pads independent request histories to the longest sequence, and masks
+  both future and padded positions during cached execution.
 - **Variable-length FlashAttention on CUDA:** consumes flattened queries, physical K/V
   blocks, a block table, and the effective sequence length. It applies causal
   masking and GQA head mapping inside the kernel without materializing
@@ -354,6 +355,7 @@ uv run python -m benchmarks \
   --device cpu \
   --device cuda \
   --prompt-lengths 32 128 512 \
+  --batch-size 4 \
   --warmups 1 \
   --repeats 3 \
   --decode-tokens 16
@@ -368,7 +370,7 @@ reported as errors. Load and transfer times are reported separately.
 | --- | --- |
 | `cache-decode` | Cached versus uncached TPOT, throughput, cached speedup, cache memory, and logit agreement. Both paths run only for requested prompts up to 32 tokens. |
 | `moe-prefill` | Full Granite prefill latency and throughput using the device's automatic expert method. |
-| `end-to-end` | TTFT, prefill throughput, decode TPOT/throughput, output tokens, and cache memory through `Engine.generate`. |
+| `end-to-end` | TTFT, sequential-prefill throughput, padded-batch decode TPOT/throughput, output tokens, and cache memory through `Engine.generate`; `--batch-size` controls the request count. |
 
 Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
 runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy
@@ -410,9 +412,9 @@ uv run python -m examples.generation_demo models/qwen3-0.6b
 
 ## Current Limitations
 
-- One active request and batch size one.
+- Static request batches only; no dynamic admission during generation.
 - Synchronous, non-streaming HTTP responses.
 - CUDA paged attention requires the optional pinned vLLM operator group.
 - No prefix sharing, sliding-window eviction, or CPU cache offload.
-- No concurrent batching.
+- The HTTP server still serializes requests instead of continuously batching them.
 - Only Qwen3 and Granite 3.1 MoE architectures.

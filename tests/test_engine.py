@@ -300,6 +300,34 @@ class EngineTests(unittest.TestCase):
                 cache_backend="unknown",  # type: ignore[arg-type]
             )
 
+    def test_rejects_request_batch_larger_than_configured_maximum(self) -> None:
+        engine = self._mock_engine()
+
+        with self.assertRaisesRegex(EngineError, "exceeds engine maximum"):
+            engine.generate(
+                (
+                    [ChatMessage("user", "first")],
+                    [ChatMessage("user", "second")],
+                ),
+                max_new_tokens=1,
+            )
+
+    @patch("mini_llm.engine.PagedKVCachePool")
+    def test_batch_size_scales_cache_pool_capacity(
+        self, paged_pool: MagicMock
+    ) -> None:
+        engine = self._mock_engine()
+        engine.max_batch_size = 3
+
+        _ = engine.cache_manager
+
+        paged_pool.assert_called_once_with(
+            engine.model.config,
+            768,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
     def test_to_rejects_moving_with_an_active_request_cache(self) -> None:
         engine = self._mock_engine()
         manager = MagicMock()
@@ -337,7 +365,7 @@ class EngineTests(unittest.TestCase):
         ]
 
         result = engine.generate(
-            messages,
+            (messages,),
             max_new_tokens=12,
             sampling=sampling,
             enable_thinking=True,
@@ -347,7 +375,7 @@ class EngineTests(unittest.TestCase):
         generate_text.assert_called_once_with(
             model,
             tokenizer,
-            messages,
+            (messages,),
             max_new_tokens=12,
             sampling=sampling,
             enable_thinking=True,
@@ -446,7 +474,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         )
 
         events = list(
-            engine.generate([ChatMessage("user", "Say hello.")], max_new_tokens=2)
+            engine.generate(([ChatMessage("user", "Say hello.")],), max_new_tokens=2)
         )
 
         self.assertEqual(engine.device, torch.device("mps"))
@@ -493,7 +521,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         )
         cpu_token_ids = [
             event.token_id
-            for event in cpu_engine.generate(messages, max_new_tokens=40)
+            for _, event in cpu_engine.generate((messages,), max_new_tokens=40)
         ]
         del cpu_engine
         gc.collect()
@@ -506,7 +534,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         )
         mps_token_ids = [
             event.token_id
-            for event in mps_engine.generate(messages, max_new_tokens=40)
+            for _, event in mps_engine.generate((messages,), max_new_tokens=40)
         ]
 
         self.assertEqual(mps_token_ids, cpu_token_ids)
@@ -519,7 +547,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
         engine = Engine.from_model_dir(
             QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
         )
-        list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
+        list(engine.generate(([ChatMessage("user", "Hello")],), max_new_tokens=1))
         old_manager = engine.cache_manager
         self.assertEqual(old_manager.active_sequences, 0)
 
@@ -535,7 +563,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
             torch.float32,
         )
         events = list(
-            engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1)
+            engine.generate(([ChatMessage("user", "Hello")],), max_new_tokens=1)
         )
         self.assertTrue(events)
 
@@ -547,7 +575,7 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
         )
 
         events = list(
-            engine.generate([ChatMessage("user", "Say hello.")], max_new_tokens=2)
+            engine.generate(([ChatMessage("user", "Say hello.")],), max_new_tokens=2)
         )
 
         self.assertEqual(engine.device, torch.device("cuda"))
@@ -585,7 +613,7 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
         engine = Engine.from_model_dir(
             QWEN_MODEL_DIR, device="cpu", dtype="float16", max_seq_len=128
         )
-        list(engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1))
+        list(engine.generate(([ChatMessage("user", "Hello")],), max_new_tokens=1))
         old_manager = engine.cache_manager
         self.assertEqual(old_manager.active_sequences, 0)
 
@@ -601,7 +629,7 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
             torch.float32,
         )
         events = list(
-            engine.generate([ChatMessage("user", "Hello")], max_new_tokens=1)
+            engine.generate(([ChatMessage("user", "Hello")],), max_new_tokens=1)
         )
         self.assertTrue(events)
 

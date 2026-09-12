@@ -36,12 +36,12 @@ class GenerationEngine(Protocol):
 
     def generate(
         self,
-        messages: Sequence[ChatMessage],
+        message_batches: Sequence[Sequence[ChatMessage]],
         *,
         max_new_tokens: int,
         sampling: SamplingConfig,
         enable_thinking: bool = False,
-    ) -> Iterator[GenerationEvent]: ...
+    ) -> Iterator[tuple[int, GenerationEvent]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,13 +52,15 @@ class _CompletedGeneration:
     completion_tokens: int
 
 
-def _consume_generation(events: Iterator[GenerationEvent]) -> _CompletedGeneration:
+def _consume_generation(
+    events: Iterator[tuple[int, GenerationEvent]],
+) -> _CompletedGeneration:
     """Consume the runtime's token events into one HTTP response value."""
 
     final_event: GenerationEvent | None = None
     prompt_tokens: int | None = None
     completion_tokens = 0
-    for event in events:
+    for _, event in events:
         final_event = event
         if event.prompt_token_count is not None:
             prompt_tokens = event.prompt_token_count
@@ -83,9 +85,8 @@ def create_app(engine: GenerationEngine, *, served_model: str) -> FastAPI:
     if not served_model:
         raise ValueError("served_model must not be empty")
     app = FastAPI(title="mini-llm", version="0.1.0")
-    # Each loaded causal model owns one mutable KV cache. asyncio.Lock queues
-    # valid concurrent requests in acquisition order, and to_thread keeps the
-    # event loop responsive while synchronous PyTorch generation is running.
+    # The HTTP adapter remains serial until a continuous-batching scheduler
+    # owns admission. to_thread keeps the event loop responsive meanwhile.
     generation_lock = asyncio.Lock()
     app.state.engine = engine
     app.state.served_model = served_model
@@ -146,7 +147,7 @@ def _generate_completion(
     """Run one complete request inside the application's cache lock."""
 
     events = engine.generate(
-        messages,
+        (messages,),
         max_new_tokens=max_new_tokens,
         sampling=sampling,
         enable_thinking=False,

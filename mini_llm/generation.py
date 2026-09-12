@@ -1,4 +1,4 @@
-"""Autoregressive generation using one prefill followed by cached decoding."""
+"""Batched autoregressive generation using prefill and cached decoding."""
 
 from __future__ import annotations
 
@@ -32,6 +32,19 @@ class GenerationEvent:
     finish_reason: FinishReason | None = None
     model_seconds: float | None = None
     prompt_token_count: int | None = None
+
+
+@dataclass(slots=True)
+class _BatchRequest:
+    index: int
+    prompt_length: int
+    output_limit: int
+    cache: SequenceKVCache
+    generator: torch.Generator | None
+    text_decoder: "IncrementalTextDecoder"
+    logits: torch.Tensor
+    model_seconds: float | None
+    token_index: int = 0
 
 
 class IncrementalTextDecoder:
@@ -77,7 +90,7 @@ def _run_model_call(
 def generate(
     model: RuntimeCausalLM,
     tokenizer: RuntimeTokenizer,
-    messages: Sequence[ChatMessage],
+    message_batches: Sequence[Sequence[ChatMessage]],
     *,
     max_new_tokens: int,
     sampling: SamplingConfig = SamplingConfig(),
@@ -88,23 +101,14 @@ def generate(
     decode_factory: (
         Callable[[SequenceKVCache], Callable[[torch.Tensor], torch.Tensor]] | None
     ) = None,
-) -> Iterator[GenerationEvent]:
-    """Format complete chat history and return its generation iterator.
+) -> Iterator[tuple[int, GenerationEvent]]:
+    """Generate one or more requests and identify their streamed events."""
 
-    Formatting, tokenization, and request validation happen before this
-    function returns. This lets an HTTP adapter reject an invalid request
-    before it commits streaming response headers. Model execution remains lazy
-    and begins when the returned iterator is consumed.
-    """
-
+    if not message_batches:
+        raise GenerationError("a generation batch must contain at least one request")
     if max_new_tokens <= 0:
         raise GenerationError("max_new_tokens must be positive")
-    formatted_prompt = tokenizer.format_chat(
-        messages, enable_thinking=enable_thinking
-    )
-    prompt_token_ids = tokenizer.encode(formatted_prompt)
 
-    prompt_length = len(prompt_token_ids)
     model_context_limit = model.config.max_position_embeddings
     context_limit = model_context_limit if max_seq_len is None else max_seq_len
     if context_limit <= 0 or context_limit > model_context_limit:
@@ -112,88 +116,131 @@ def generate(
             f"max_seq_len must be within [1, {model_context_limit}], got "
             f"{context_limit}"
         )
-    if prompt_length > context_limit:
-        raise GenerationError(
-            f"prompt has {prompt_length} tokens but model context limit is "
-            f"{context_limit}"
+
+    prompts = []
+    for messages in message_batches:
+        formatted_prompt = tokenizer.format_chat(
+            messages, enable_thinking=enable_thinking
         )
-
-    available_positions = context_limit - prompt_length
-    output_limit = min(max_new_tokens, available_positions)
-
-    def iterate() -> Iterator[GenerationEvent]:
-        # A local generator keeps model execution lazy for streaming, while all
-        # request validation above has already happened eagerly.
-        if output_limit == 0:
-            yield GenerationEvent(
-                token_id=None,
-                token_index=None,
-                text_delta="",
-                text="",
-                finish_reason="context_length",
-                prompt_token_count=prompt_length,
+        prompt_token_ids = tokenizer.encode(formatted_prompt)
+        if len(prompt_token_ids) > context_limit:
+            raise GenerationError(
+                f"prompt has {len(prompt_token_ids)} tokens but model context "
+                f"limit is {context_limit}"
             )
-            return
+        prompts.append(prompt_token_ids)
 
-        device = model.input_device
-        prompt_tokens = torch.tensor(
-            [prompt_token_ids], dtype=torch.long, device=device
-        )
-        cache = cache_manager.allocate(prompt_length + output_limit)
-        random_generator = make_generator(sampling.seed)
-        eos_token_ids = set(model.config.eos_token_ids)
-        text_decoder = IncrementalTextDecoder(tokenizer)
-        decode: Callable[[torch.Tensor], torch.Tensor] | None = None
-
+    def iterate() -> Iterator[tuple[int, GenerationEvent]]:
+        active: list[_BatchRequest] = []
+        single_decode: Callable[[torch.Tensor], torch.Tensor] | None = None
         try:
-            with torch.inference_mode():
-                logits, model_seconds = _run_model_call(
-                    lambda: model.prefill(prompt_tokens, cache=cache), synchronize
+            for index, prompt_token_ids in enumerate(prompts):
+                prompt_length = len(prompt_token_ids)
+                output_limit = min(
+                    max_new_tokens, context_limit - prompt_length
                 )
-            for token_index in range(output_limit):
-                token_id = sample_next_token(
-                    logits[0, -1], sampling, generator=random_generator
-                )
-                text_delta = text_decoder.add(token_id)
-
-                finish_reason: FinishReason | None = None
-                if token_id in eos_token_ids:
-                    finish_reason = "eos"
-                elif token_index + 1 == output_limit:
-                    finish_reason = (
-                        "context_length"
-                        if output_limit < max_new_tokens
-                        else "max_new_tokens"
+                if output_limit == 0:
+                    yield index, GenerationEvent(
+                        token_id=None,
+                        token_index=None,
+                        text_delta="",
+                        text="",
+                        finish_reason="context_length",
+                        prompt_token_count=prompt_length,
                     )
+                    continue
 
-                yield GenerationEvent(
-                    token_id=token_id,
-                    token_index=token_index,
-                    text_delta=text_delta,
-                    text=text_decoder.text,
-                    finish_reason=finish_reason,
-                    model_seconds=model_seconds,
-                    prompt_token_count=prompt_length if token_index == 0 else None,
+                cache = cache_manager.allocate(prompt_length + output_limit)
+                prompt_tokens = torch.tensor(
+                    [prompt_token_ids], dtype=torch.long, device=model.input_device
                 )
-                if finish_reason is not None:
-                    return
-
-                token_input = torch.tensor(
-                    [[token_id]], dtype=torch.long, device=device
-                )
-                if decode is None:
-                    decode = (
-                        decode_factory(cache)
-                        if decode_factory is not None
-                        else lambda input_ids: model.decode(
-                            input_ids, caches=(cache,)
+                try:
+                    with torch.inference_mode():
+                        logits, model_seconds = _run_model_call(
+                            lambda: model.prefill(prompt_tokens, cache=cache),
+                            synchronize,
                         )
+                except Exception:
+                    cache_manager.release(cache)
+                    raise
+                active.append(
+                    _BatchRequest(
+                        index=index,
+                        prompt_length=prompt_length,
+                        output_limit=output_limit,
+                        cache=cache,
+                        generator=make_generator(sampling.seed),
+                        text_decoder=IncrementalTextDecoder(tokenizer),
+                        logits=logits,
+                        model_seconds=model_seconds,
                     )
+                )
+
+            eos_token_ids = set(model.config.eos_token_ids)
+            while active:
+                continuing = []
+                token_ids = []
+                for request in active:
+                    token_id = sample_next_token(
+                        request.logits[0, -1],
+                        sampling,
+                        generator=request.generator,
+                    )
+                    text_delta = request.text_decoder.add(token_id)
+                    request.token_index += 1
+
+                    finish_reason: FinishReason | None = None
+                    if token_id in eos_token_ids:
+                        finish_reason = "eos"
+                    elif request.token_index == request.output_limit:
+                        finish_reason = (
+                            "context_length"
+                            if request.output_limit < max_new_tokens
+                            else "max_new_tokens"
+                        )
+
+                    yield request.index, GenerationEvent(
+                        token_id=token_id,
+                        token_index=request.token_index - 1,
+                        text_delta=text_delta,
+                        text=request.text_decoder.text,
+                        finish_reason=finish_reason,
+                        model_seconds=request.model_seconds,
+                        prompt_token_count=(
+                            request.prompt_length
+                            if request.token_index == 1
+                            else None
+                        ),
+                    )
+                    if finish_reason is None:
+                        continuing.append(request)
+                        token_ids.append(token_id)
+                    else:
+                        cache_manager.release(request.cache)
+
+                active = continuing
+                if not active:
+                    break
+
+                token_inputs = torch.tensor(
+                    token_ids, dtype=torch.long, device=model.input_device
+                ).unsqueeze(1)
                 with torch.inference_mode():
-                    logits, model_seconds = _run_model_call(
-                        lambda: decode(token_input), synchronize
-                    )
+                    if len(active) == 1 and decode_factory is not None:
+                        if single_decode is None:
+                            single_decode = decode_factory(active[0].cache)
+                        operation = lambda: single_decode(token_inputs)
+                    else:
+                        operation = lambda: model.decode(
+                            token_inputs,
+                            caches=tuple(request.cache for request in active),
+                        )
+                    logits, model_seconds = _run_model_call(operation, synchronize)
+                for row, request in enumerate(active):
+                    request.logits = logits[row : row + 1]
+                    request.model_seconds = model_seconds
         finally:
-            cache_manager.release(cache)
+            for request in active:
+                cache_manager.release(request.cache)
 
     return iterate()

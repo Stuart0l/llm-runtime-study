@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmups", type=_non_negative_int, default=1)
     parser.add_argument("--repeats", type=_positive_int, default=3)
     parser.add_argument("--decode-tokens", type=_positive_int, default=16)
+    parser.add_argument("--batch-size", type=_positive_int, default=1)
     return parser
 
 
@@ -145,6 +146,7 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
             device=first_device,
             dtype="float16",
             max_seq_len=max_seq_len,
+            max_batch_size=args.batch_size,
         )
         print(
             f"Loaded {model_dir.name} once on {first_device} in "
@@ -206,6 +208,7 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
                         warmups=args.warmups,
                         repeats=args.repeats,
                         decode_tokens=args.decode_tokens,
+                        batch_size=args.batch_size,
                     )
                 )
 
@@ -237,4 +240,3 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

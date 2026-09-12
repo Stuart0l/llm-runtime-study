@@ -45,26 +45,27 @@ class _FakeEngine:
 
     def generate(
         self,
-        messages: Sequence[ChatMessage],
+        message_batches: Sequence[Sequence[ChatMessage]],
         *,
         max_new_tokens: int,
         sampling: SamplingConfig,
         enable_thinking: bool,
-    ) -> Iterator[GenerationEvent]:
+    ) -> Iterator[tuple[int, GenerationEvent]]:
+        messages = message_batches[0]
         self.calls.append((list(messages), max_new_tokens, sampling, enable_thinking))
         if self.failure is not None:
             raise self.failure
 
         prompt = messages[-1].content
 
-        def iterate() -> Iterator[GenerationEvent]:
+        def iterate() -> Iterator[tuple[int, GenerationEvent]]:
             with self._state_lock:
                 self.started.append(prompt)
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
             try:
                 time.sleep(self.delay)
-                yield GenerationEvent(
+                yield 0, GenerationEvent(
                     token_id=10,
                     token_index=0,
                     text_delta=f"reply:{prompt}",
