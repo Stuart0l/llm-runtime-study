@@ -152,6 +152,9 @@ class Engine:
     _cache_manager: KVCacheManager | None = field(
         default=None, init=False, repr=False
     )
+    _decode_graph: PagedDecodeGraph | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.cache_backend not in ("paged", "dense"):
@@ -234,7 +237,12 @@ class Engine:
             and isinstance(cache, SequenceCacheHandle)
             and isinstance(self.model, CausalLMBase)
         ):
-            return PagedDecodeGraph(self.model, cache).replay
+            # Create/Recreate the graph if it is uninitialized or the cache pool has changed.
+            if self._decode_graph is None or self._decode_graph.cache.pool is not cache.pool:
+                self._decode_graph = PagedDecodeGraph(self.model, cache)
+            else:
+                self._decode_graph.cache.bind(cache)
+            return self._decode_graph.replay
         return lambda input_ids: self.model.decode(input_ids, cache=cache)
 
     def _ensure_cache_manager(self) -> KVCacheManager:
@@ -301,6 +309,7 @@ class Engine:
 
         # Module.to preserves eval mode and requires_grad flags. Cache managers
         # are runtime-owned and rebuilt lazily for the new placement.
+        self._decode_graph = None
         self.model.to(device=selected_device, dtype=selected_dtype)
         if self.quantization == "gptq-marlin":
             self.model.prepare_quantized(selected_device)

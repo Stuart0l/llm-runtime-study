@@ -2,8 +2,8 @@
 
 ## Scope
 
-`PagedDecodeGraph` captures one complete numerical decode step for a single
-request:
+`PagedDecodeGraph` captures one complete numerical decode step for a paged
+cache shape:
 
 ```text
 token embedding -> decoder layers -> paged attention -> final norm -> LM head
@@ -29,6 +29,8 @@ cache.
 
 ## Capture and replay
 
+### Graph capture
+
 Generation first prefills the request cache normally. A graph is created
 lazily only if generation needs a decode after the first sampled token. This
 avoids capture for requests that finish immediately because of EOS, the token
@@ -37,14 +39,39 @@ limit, or the context limit.
 Capture allocates persistent CUDA tensors for:
 
 - one `[1, 1]` `torch.long` input token;
-- one `[1, 1]` `torch.long` position ID; and
+- one `[1, 1]` `torch.long` position ID;
+- one block table sized for the model's maximum sequence length; and
 - the output logits owned by the graph.
 
 The graph records `DecoderModel.forward()` followed by the LM-head projection.
-CUDA capture executes the operations once, so it also writes the placeholder
-token's K/V data into the next cache position. After capture, the runtime rolls
-the host-visible cache length back to its pre-capture value. The placeholder
-device data is harmless because the first replay overwrites the same position.
+
+### PagedGraphCache
+
+The captured graph needs a fixed-size block table and maximum cache capacity,
+while a request cache must describe only the blocks and capacity actually
+allocated to that request. Using the request cache for both roles would require
+temporarily replacing its allocation metadata during capture.
+
+`PagedGraphCache` keeps those roles separate. Its capture-facing layer views
+use the persistent block table, maximum sequence capacity, and the same
+physical K/V pool as the request. Its host-facing state delegates length,
+capacity checks, and rollback to the currently bound request cache.
+
+CUDA replay uses the captured table and pool addresses directly. The host still
+needs the bound request length to update the position tensor and keep logical
+cache state synchronized with the K/V writes. Binding another request copies
+its allocated block IDs into the persistent table prefix and changes which
+request receives that host-side bookkeeping.
+
+### Replay
+
+The request's first replay overwrites the placeholder K/V data written during
+capture.
+
+The table shape does not depend on request capacity or physical pool size, so
+requests with different cache capacities can share the graph. Replacing the
+pool replaces the retained graph because capture fixes the K/V storage
+addresses.
 
 For every replay, the host performs four small operations:
 
@@ -68,10 +95,11 @@ No explicit model warm-up is required before capture. Zero-warm-up correctness
 tests pass for the small dense model and the real GPTQ INT4 and INT8 Qwen
 checkpoints.
 
-The graph and its persistent tensors are request-scoped. Generation releases
-the associated cache on completion, stream closure, or failure. Returned
-logits are graph-owned storage and will be overwritten by the next replay;
-generation consumes them before that happens.
+The graph and its persistent tensors are engine-owned, while request caches are
+released on completion, stream closure, or failure. Returned logits are
+graph-owned storage and will be overwritten by the next replay; generation
+consumes them before that happens. Mutable graph inputs assume the runtime's
+current single-active-request execution.
 
 ## Decode benchmark
 
@@ -106,10 +134,22 @@ removes most repeated CPU launch overhead: INT8 becomes 22% faster than the
 captured FP16 model, and INT4 becomes 37% faster. The remaining graph replay
 time then exposes the lower-cost quantized matrix multiplications.
 
-At these measurements, the roughly 20-22 ms request-local capture cost is
+At these measurements, the roughly 20-22 ms initial capture cost is
 recovered after two decoded tokens. This crossover excludes sampling overhead
 and is specific to the tested hardware, software versions, model, batch size,
 and sequence lengths. End-to-end serving results can differ because sampling
-and other host work are not captured, and the current implementation captures
-a new graph for every request rather than reusing graphs across cache handles.
+and other host work are not captured.
 
+Four sequential requests with the same six-block cache shape measured the
+first cold capture separately from later block-table rebinds:
+
+| Weights | First capture | Median rebind | Reused decode tokens/s |
+| --- | ---: | ---: | ---: |
+| FP16 | 86.388 ms | 0.032 ms | 171.26 |
+| GPTQ INT8 | 22.313 ms | 0.028 ms | 209.80 |
+| GPTQ INT4 | 22.056 ms | 0.030 ms | 232.14 |
+
+For a 32-token prompt, the fixed 2,560-entry table required by Qwen3's 40,960-
+token context measured 5.8906 ms per decoded token, versus 5.7695 ms with a
+request-sized table. This 2.1% difference is small relative to the recaptures
+avoided across request lengths. Unused table entries do not allocate KV blocks.

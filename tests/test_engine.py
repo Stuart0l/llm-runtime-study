@@ -256,6 +256,38 @@ class EngineTests(unittest.TestCase):
         paged_decode_graph.assert_not_called()
         model.decode.assert_called_once_with(input_ids, cache=cache)
 
+    @patch("mini_llm.engine.PagedDecodeGraph")
+    def test_reuses_decode_graph_across_block_counts(
+        self, paged_decode_graph: MagicMock
+    ) -> None:
+        model = MagicMock(spec=CausalLMBase)
+        engine = Engine(
+            model=model,
+            tokenizer=MagicMock(),
+            device=torch.device("cuda"),
+            dtype=torch.float16,
+            max_seq_len=32,
+            load_seconds=0.0,
+        )
+        pool = MagicMock()
+        first_cache = MagicMock(spec=SequenceCacheHandle)
+        first_cache.pool = pool
+        first_cache.block_table = torch.tensor([0, 1])
+        second_cache = MagicMock(spec=SequenceCacheHandle)
+        second_cache.pool = pool
+        second_cache.block_table = torch.tensor([2, 3, 4])
+        paged_decode_graph.return_value.cache.pool = pool
+
+        first_decode = engine._make_decode(first_cache)
+        second_decode = engine._make_decode(second_cache)
+
+        paged_decode_graph.assert_called_once_with(model, first_cache)
+        paged_decode_graph.return_value.cache.bind.assert_called_once_with(
+            second_cache
+        )
+        self.assertIs(first_decode, paged_decode_graph.return_value.replay)
+        self.assertIs(second_decode, paged_decode_graph.return_value.replay)
+
     def test_rejects_unknown_cache_backend(self) -> None:
         with self.assertRaisesRegex(EngineError, "cache backend"):
             Engine(
@@ -330,6 +362,7 @@ class EngineTests(unittest.TestCase):
         self, synchronize: MagicMock
     ) -> None:
         engine = self._mock_engine()
+        engine._decode_graph = MagicMock()
 
         result = engine.to(device="cpu", dtype="float16")
 
@@ -343,6 +376,7 @@ class EngineTests(unittest.TestCase):
         synchronize.assert_called_once_with(torch.device("cpu"))
         self.assertEqual(engine.device, torch.device("cpu"))
         self.assertEqual(engine.dtype, torch.float16)
+        self.assertIsNone(engine._decode_graph)
 
     @patch("mini_llm.engine.synchronize_device")
     def test_to_retains_omitted_dtype_when_changing_device(

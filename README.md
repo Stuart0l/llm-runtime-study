@@ -15,7 +15,7 @@ The runtime currently supports:
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
 | Execution | CPU, NVIDIA CUDA, and Apple MPS; batch size one; one active request |
 | Cache | Runtime-owned request caches; paged by default, dense optional |
-| CUDA graphs | Request-local, single-token decode with the paged CUDA cache |
+| CUDA graphs | Reusable single-token decode with the paged CUDA cache |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
 
 ### Platform support
@@ -330,7 +330,9 @@ layout, and CUDA benchmark results.
 ### CUDA graph decode
 
 On CUDA, `Engine` captures complete single-token decode with the default paged
-cache. Prefill, sampling, validation, and request management remain eager.
+cache. A fixed-size graph block table lets sequential requests reuse the graph
+across different cache capacities. Prefill, sampling, validation, and request
+management remain eager.
 
 See [CUDA graph decode](doc/cuda-graph.md) for the capture lifecycle,
 correctness constraints, and FP16, GPTQ INT8, and GPTQ INT4 measurements.
