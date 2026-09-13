@@ -10,7 +10,7 @@ import torch
 from torch import nn
 
 from mini_llm.cache import LayerKVCache, SequenceKVCache
-from mini_llm.cache.batch import PaddedBatchLayerKVCache
+from mini_llm.cache.batch import BatchLayerKVCache
 from mini_llm.checkpoint import (
     CheckpointValidationError,
     SafeTensorCheckpoint,
@@ -232,7 +232,7 @@ class CausalLMBase(nn.Module):
             layer_caches = caches[0].layers
         else:
             layer_caches = [
-                PaddedBatchLayerKVCache(
+                BatchLayerKVCache(
                     [cache.layers[layer_index] for cache in caches]
                 )
                 for layer_index in range(self.config.num_hidden_layers)

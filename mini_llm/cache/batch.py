@@ -1,17 +1,16 @@
-"""Padded attention views over independent request caches."""
+"""Attention views over independent request caches."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 import torch
-from torch.nn import functional as F
 
 from mini_llm.cache.contracts import LayerKVCache, LayerKVCacheView
 
 
-class PaddedBatchLayerKVCache:
-    """Combine one layer from each request into a padded SDPA cache."""
+class BatchLayerKVCache:
+    """Combine one layer from each request for batched attention."""
 
     def __init__(self, caches: Sequence[LayerKVCache]) -> None:
         if not caches:
@@ -41,17 +40,51 @@ class PaddedBatchLayerKVCache:
             )
 
     def view(self, *, gathered: bool) -> LayerKVCacheView:
+        views = [cache.view(gathered=gathered) for cache in self.caches]
         if not gathered:
-            raise ValueError("a padded cache batch only exposes gathered K/V")
-        views = [cache.view(gathered=True) for cache in self.caches]
-        length = max(view.keys.shape[2] for view in views)
+            # Paged cache, share one KV pool
+            keys = views[0].keys
+            values = views[0].values
+            if any(
+                view.block_table is None
+                or view.keys is not keys
+                or view.values is not values
+                for view in views
+            ):
+                raise ValueError(
+                    "a scattered cache batch must share one paged K/V pool"
+                )
+            block_count = max(view.block_table.shape[1] for view in views)
+            block_table = views[0].block_table.new_zeros(
+                (len(views), block_count)
+            )
+            for index, view in enumerate(views):
+                block_table[index, : view.block_table.shape[1]].copy_(
+                    view.block_table[0]
+                )
+            return LayerKVCacheView(
+                keys=keys,
+                values=values,
+                # Entries beyond each request's length are ignored, so block
+                # zero is safe padding for shorter tables.
+                block_table=block_table,
+                capacity=max(view.capacity for view in views),
+            )
 
-        def pad(tensor: torch.Tensor) -> torch.Tensor:
-            return F.pad(tensor, (0, 0, 0, length - tensor.shape[2]))
+        # Dense cache, copy K/V directly into one zero-padded batch allocation.
+        length = max(view.keys.shape[2] for view in views)
+        _, heads, _, head_dim = views[0].keys.shape
+        batch_shape = (len(views), heads, length, head_dim)
+        keys = views[0].keys.new_zeros(batch_shape)
+        values = views[0].values.new_zeros(batch_shape)
+        for batch_index, view in enumerate(views):
+            request_length = view.keys.shape[2]
+            keys[batch_index, :, :request_length].copy_(view.keys[0])
+            values[batch_index, :, :request_length].copy_(view.values[0])
 
         return LayerKVCacheView(
-            keys=torch.cat([pad(view.keys) for view in views]),
-            values=torch.cat([pad(view.values) for view in views]),
+            keys=keys,
+            values=values,
             block_table=None,
             capacity=length,
         )

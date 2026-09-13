@@ -5,16 +5,17 @@ import unittest
 import torch
 
 from mini_llm.cache import KVCacheError
+from mini_llm.cache.batch import BatchLayerKVCache
 from mini_llm.cache.dense import (
     DenseKVCache,
     DenseKVCacheManager,
     DenseLayerKVCache,
 )
-from mini_llm.config import GraniteMoeConfig
+from mini_llm.config import GraniteMoeConfig, Qwen3Config
 from mini_llm.cache.paged import PagedKVCachePool
 from mini_llm.model.qwen import Qwen3ForCausalLM
 from tests.test_config import valid_granite_config
-from tests.test_qwen_model import _tiny_config
+from tests.test_qwen_model import _tiny_config, _tiny_config_data
 
 
 class DenseLayerKVCacheTests(unittest.TestCase):
@@ -196,6 +197,52 @@ class CacheBackendContractTests(unittest.TestCase):
                     manager.release(first_cache)
                     manager.release(second_cache)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_cuda_ragged_paged_decode_matches_uncached_sequences(self) -> None:
+        config_data = _tiny_config_data()
+        config_data.update(
+            vocab_size=64,
+            hidden_size=128,
+            intermediate_size=256,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=32,
+        )
+        model = (
+            Qwen3ForCausalLM(Qwen3Config.from_dict(config_data))
+            .cuda()
+            .half()
+            .eval()
+        )
+        model.requires_grad_(False)
+        model.materialize_derived_buffers(torch.device("cuda"))
+        first_tokens = torch.tensor([[1, 4, 7]], device="cuda")
+        second_tokens = torch.tensor([[2, 5, 8, 10, 12]], device="cuda")
+        pool = PagedKVCachePool(
+            model.config, 32, dtype=torch.float16, device="cuda"
+        )
+        first = pool.allocate(6)
+        second = pool.allocate(6)
+
+        with torch.inference_mode():
+            first_reference = model(first_tokens)
+            second_reference = model(second_tokens)
+            model.prefill(first_tokens[:, :2], cache=first)
+            model.prefill(second_tokens[:, :4], cache=second)
+            logits = model.decode(
+                torch.tensor([[7], [12]], device="cuda"),
+                caches=(first, second),
+            )
+
+        torch.testing.assert_close(
+            logits[0], first_reference[:, 2], rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            logits[1], second_reference[:, 4], rtol=1e-2, atol=1e-2
+        )
+        pool.release(first)
+        pool.release(second)
+
     def test_overflow_is_checked_before_any_layer_is_modified(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
         for manager in self._managers(3):
@@ -250,6 +297,27 @@ class CacheBackendContractTests(unittest.TestCase):
 
 
 class PagedKVCachePoolTests(unittest.TestCase):
+    def test_batch_view_shares_pool_and_pads_block_tables(self) -> None:
+        pool = PagedKVCachePool(
+            _tiny_config(), 10, block_size=2, dtype=torch.float32, device="cpu"
+        )
+        first = pool.allocate(3)
+        second = pool.allocate(5)
+        batch = BatchLayerKVCache((first.layers[0], second.layers[0]))
+
+        view = batch.view(gathered=False)
+
+        self.assertIs(view.keys, pool.keys[0])
+        self.assertIs(view.values, pool.values[0])
+        self.assertEqual(view.capacity, 5)
+        assert view.block_table is not None
+        self.assertEqual(view.block_table.shape, (2, 3))
+        torch.testing.assert_close(
+            view.block_table[0],
+            torch.cat((first.block_table, first.block_table.new_zeros(1))),
+        )
+        torch.testing.assert_close(view.block_table[1], second.block_table)
+
     def test_append_and_gather_cross_block_boundaries(self) -> None:
         config = _tiny_config()
         pool = PagedKVCachePool(

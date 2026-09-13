@@ -11,6 +11,7 @@ from torch.nn import functional as F
 from mini_llm.quantization.fusion import FusedMarlinProjection
 from mini_llm.quantization import GPTQMarlinLinear
 from mini_llm.cache import LayerKVCache
+from mini_llm.cache.batch import BatchLayerKVCache
 from mini_llm.cache.paged import PagedLayerKVCache
 from mini_llm.nn.norm import RMSNorm, normalize_qwen3_queries_and_keys
 from mini_llm.nn.rope import apply_rotary_position_embeddings
@@ -183,8 +184,15 @@ class GroupedQueryAttention(nn.Module):
 
         if cache is not None and position_ids is None:
             raise ValueError("cached attention requires position_ids")
+        # A batch adapter uses the paged kernel when its request layers are paged.
         if (
-            isinstance(cache, PagedLayerKVCache)
+            (
+                isinstance(cache, PagedLayerKVCache)
+                or (
+                    isinstance(cache, BatchLayerKVCache)
+                    and isinstance(cache.caches[0], PagedLayerKVCache)
+                )
+            )
             and inputs.is_cuda
             and not self.training
         ):
@@ -193,16 +201,21 @@ class GroupedQueryAttention(nn.Module):
 
             cache_view = cache.view(gathered=False)
             assert cache_view.block_table is not None
+            batch_size = queries.shape[0]
             query_length = queries.shape[2]
             query = queries.transpose(1, 2).contiguous().view(
-                query_length, queries.shape[1], queries.shape[3]
+                batch_size * query_length,
+                queries.shape[1],
+                queries.shape[3],
             )
             output = flash_attn_varlen_func(
                 q=query,
                 k=cache_view.keys,
                 v=cache_view.values,
                 cu_seqlens_q=torch.arange(
-                    2, dtype=torch.int32, device=queries.device
+                    batch_size + 1,
+                    dtype=torch.int32,
+                    device=queries.device,
                 )
                 * query_length,
                 max_seqlen_q=query_length,
@@ -213,7 +226,10 @@ class GroupedQueryAttention(nn.Module):
                 block_table=cache_view.block_table,
             )
             attended = output.view(
-                1, query_length, queries.shape[1], queries.shape[3]
+                batch_size,
+                query_length,
+                queries.shape[1],
+                queries.shape[3],
             ).transpose(1, 2)
         else:
             attention_mask = None
