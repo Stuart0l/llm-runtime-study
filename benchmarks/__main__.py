@@ -11,13 +11,13 @@ from typing import Sequence, TextIO
 
 import torch
 
-from benchmarks import cache_decode, end_to_end, moe_prefill
+from benchmarks import end_to_end, moe_prefill
 from benchmarks.common import PromptCase, build_prompt_case, render_table
 from mini_llm.config import load_config
 from mini_llm.engine import Engine, EngineError, infer_quantization
 
 
-BENCHMARKS = ("cache-decode", "moe-prefill", "end-to-end")
+BENCHMARKS = ("moe-prefill", "end-to-end")
 
 
 class BenchmarkError(ValueError):
@@ -114,7 +114,6 @@ def _print_results(
         if not suite_rows:
             continue
         headers = {
-            "cache-decode": cache_decode.HEADERS,
             "moe-prefill": moe_prefill.HEADERS,
             "end-to-end": end_to_end.HEADERS,
         }[name]
@@ -180,16 +179,6 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
                     file=output,
                 )
 
-            if "cache-decode" in selected:
-                rows["cache-decode"].extend(
-                    cache_decode.run(
-                        engine,
-                        cases,
-                        warmups=args.warmups,
-                        repeats=args.repeats,
-                        decode_tokens=args.decode_tokens,
-                    )
-                )
             if "moe-prefill" in selected and is_granite:
                 rows["moe-prefill"].extend(
                     moe_prefill.run(

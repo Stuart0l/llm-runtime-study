@@ -9,7 +9,7 @@ import unittest
 
 import torch
 
-from benchmarks import cache_decode, end_to_end
+from benchmarks import end_to_end
 from benchmarks.__main__ import BenchmarkError, _selected_devices, run
 from benchmarks.common import PromptCase, measure, render_table
 from mini_llm.generation import GenerationEvent
@@ -54,33 +54,6 @@ class MeasurementTests(unittest.TestCase):
             measure(lambda: None, synchronize=lambda: None, warmups=-1, repeats=1)
         with self.assertRaisesRegex(ValueError, "repeats"):
             measure(lambda: None, synchronize=lambda: None, warmups=0, repeats=0)
-
-
-class CacheDecodeBenchmarkTests(unittest.TestCase):
-    def test_long_prompt_skips_entire_comparison(self) -> None:
-        logits = torch.tensor([[[0.0, 1.0, 0.0, 0.0]]])
-        model = MagicMock()
-        model.prefill.return_value = logits
-        model.decode.return_value = logits
-        engine = SimpleNamespace(
-            model=model,
-            device=torch.device("cpu"),
-            synchronize=lambda: None,
-        )
-
-        rows = cache_decode.run(
-            engine,
-            [PromptCase(128, "prompt", (1, 2))],
-            warmups=0,
-            repeats=1,
-            decode_tokens=1,
-        )
-
-        model.assert_not_called()
-        self.assertEqual(rows, [])
-
-    def test_table_names_cached_speedup_explicitly(self) -> None:
-        self.assertIn("cached speedup", cache_decode.HEADERS)
 
 
 class EndToEndBenchmarkTests(unittest.TestCase):
@@ -143,7 +116,7 @@ class EndToEndBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(len(engine.generate.call_args.args[0]), 2)
         self.assertEqual(rows[0][1:3], ("2", "3"))
-        self.assertEqual(rows[0][5:8], ("25.00 ms", "40.00", "4"))
+        self.assertEqual(rows[0][5:8], ("50.00 ms", "40.00", "4"))
         self.assertEqual(rows[0][-1], "2.00 MiB")
 
 
@@ -166,7 +139,6 @@ class RunnerTests(unittest.TestCase):
     @patch("benchmarks.__main__.gc.collect")
     @patch("benchmarks.__main__.end_to_end.run", return_value=[])
     @patch("benchmarks.__main__.moe_prefill.run", return_value=[])
-    @patch("benchmarks.__main__.cache_decode.run", return_value=[])
     @patch("benchmarks.__main__.build_prompt_case")
     @patch("benchmarks.__main__.load_config")
     @patch("benchmarks.__main__.Engine.from_model_dir")
@@ -175,7 +147,6 @@ class RunnerTests(unittest.TestCase):
         from_model_dir: MagicMock,
         load_config: MagicMock,
         build_prompt_case: MagicMock,
-        cache_run: MagicMock,
         moe_run: MagicMock,
         end_to_end_run: MagicMock,
         _collect: MagicMock,
@@ -198,7 +169,6 @@ class RunnerTests(unittest.TestCase):
         case = PromptCase(32, "prompt", (1, 2))
         build_prompt_case.return_value = case
         calls = MagicMock()
-        calls.attach_mock(cache_run, "cache")
         calls.attach_mock(moe_run, "moe")
         calls.attach_mock(end_to_end_run, "end_to_end")
         calls.attach_mock(engine.to, "move")
@@ -217,22 +187,19 @@ class RunnerTests(unittest.TestCase):
             max_batch_size=1,
         )
         engine.to.assert_called_once_with(device="mps")
-        self.assertEqual(cache_run.call_count, 2)
         self.assertEqual(moe_run.call_count, 2)
         self.assertEqual(end_to_end_run.call_count, 2)
         self.assertEqual(
             [call[0] for call in calls.mock_calls],
             [
-                "cache",
                 "moe",
                 "end_to_end",
                 "move",
-                "cache",
                 "moe",
                 "end_to_end",
             ],
         )
-        for suite in (cache_run, moe_run, end_to_end_run):
+        for suite in (moe_run, end_to_end_run):
             self.assertIs(suite.call_args_list[0].args[0], engine)
             self.assertIs(suite.call_args_list[1].args[0], engine)
         for call in end_to_end_run.call_args_list:

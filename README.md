@@ -351,7 +351,7 @@ Select suites and inputs explicitly:
 ```bash
 uv run python -m benchmarks \
   --model models/granite-3.1-1b \
-  --benchmark cache-decode moe-prefill end-to-end \
+  --benchmark moe-prefill end-to-end \
   --device cpu \
   --device cuda \
   --prompt-lengths 32 128 512 \
@@ -368,9 +368,8 @@ reported as errors. Load and transfer times are reported separately.
 
 | Suite | Measurements |
 | --- | --- |
-| `cache-decode` | Cached versus uncached TPOT, throughput, cached speedup, cache memory, and logit agreement. Both paths run only for requested prompts up to 32 tokens. |
 | `moe-prefill` | Full Granite prefill latency and throughput using the device's automatic expert method. |
-| `end-to-end` | TTFT, sequential-prefill throughput, padded-batch decode TPOT/throughput, output tokens, and cache memory through `Engine.generate`; `--batch-size` controls the request count. |
+| `end-to-end` | TTFT, sequential-prefill throughput, decode-step latency and aggregate throughput, output tokens, and cache memory through `Engine.generate`; `--batch-size` controls the request count. |
 
 Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
 runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy

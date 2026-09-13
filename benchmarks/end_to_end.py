@@ -20,7 +20,7 @@ HEADERS = (
     "prompt/request",
     "TTFT",
     "prefill tok/s",
-    "decode TPOT",
+    "decode step",
     "decode tok/s",
     "generated total",
     "cache",
@@ -34,6 +34,7 @@ class _Run:
     ttft: float
     prefill_seconds: float
     decode_seconds: float
+    decode_steps: int
 
 
 def _run_once(
@@ -69,6 +70,7 @@ def _run_once(
         ttft=first_finished - started,
         prefill_seconds=prefill_seconds,
         decode_seconds=sum(value or 0.0 for value in decode_seconds_by_step.values()),
+        decode_steps=len(decode_seconds_by_step),
     )
 
 
@@ -100,12 +102,22 @@ def run(
         decode_counts = [
             max(0, run.generated_tokens - batch_size) for run in runs
         ]
-        decode_tpots = [
-            run.decode_seconds / count
+        decode_step_times = [
+            run.decode_seconds / run.decode_steps
+            for run in runs
+            if run.decode_steps > 0 and run.decode_seconds > 0
+        ]
+        decode_throughputs = [
+            count / run.decode_seconds
             for run, count in zip(runs, decode_counts)
             if count > 0 and run.decode_seconds > 0
         ]
-        decode_tpot = median(decode_tpots) if decode_tpots else None
+        decode_step_time = (
+            median(decode_step_times) if decode_step_times else None
+        )
+        decode_throughput = (
+            median(decode_throughputs) if decode_throughputs else None
+        )
         rows.append(
             (
                 engine.device.type,
@@ -113,8 +125,12 @@ def run(
                 str(prompt_tokens // batch_size),
                 f"{ttft * 1_000:.2f} ms",
                 f"{prompt_tokens / prefill_seconds:.2f}",
-                "n/a" if decode_tpot is None else f"{decode_tpot * 1_000:.2f} ms",
-                "n/a" if decode_tpot is None else f"{1 / decode_tpot:.2f}",
+                (
+                    "n/a"
+                    if decode_step_time is None
+                    else f"{decode_step_time * 1_000:.2f} ms"
+                ),
+                "n/a" if decode_throughput is None else f"{decode_throughput:.2f}",
                 str(generated_tokens),
                 f"{engine.last_cache_num_bytes * batch_size / (1024**2):.2f} MiB",
             )
