@@ -229,12 +229,11 @@ class PagedLayerKVCache:
             )
             block_offsets = torch.remainder(positions, pool.block_size)
             block_ids = self.handle.block_table.index_select(0, table_indices)
-            slots = block_ids * pool.block_size + block_offsets
-            pool.keys[self.layer_index].flatten(0, 1).index_copy_(
-                0, slots, source_keys
+            pool.keys[self.layer_index].index_put_(
+                (block_ids, block_offsets), source_keys
             )
-            pool.values[self.layer_index].flatten(0, 1).index_copy_(
-                0, slots, source_values
+            pool.values[self.layer_index].index_put_(
+                (block_ids, block_offsets), source_values
             )
         self.handle._layer_lengths[self.layer_index] = end
 
