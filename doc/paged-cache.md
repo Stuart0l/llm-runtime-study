@@ -4,7 +4,9 @@
 
 The runtime owns cache allocation. Models receive an explicit cache and depend
 only on the protocols in `mini_llm/cache/contracts.py`; implementations live
-in `mini_llm/cache/dense.py` and `mini_llm/cache/paged.py`.
+in `mini_llm/cache/dense.py` and the `mini_llm/cache/paged/` package, which
+separates block allocation (`blocks.py`), K/V tensor storage (`store.py`) and
+the request-facing caches and manager (`cache.py`).
 
 The default paged backend stores each layer's keys and values as:
 
@@ -12,7 +14,7 @@ The default paged backend stores each layer's keys and values as:
 [blocks, 16, num_kv_heads, head_dim]
 ```
 
-A request handle contains its logical length, capacity, and ordered block
+A request cache contains its logical length, capacity, and ordered block
 table. A physical block ID selects the corresponding K/V block in every layer.
 The reference backend gathers pages into the ordinary SDPA layout.
 
@@ -32,9 +34,11 @@ expands them to query-head count only during attention.
 cache bytes = layers × 2(K,V) × KV heads × capacity × head_dim × bytes/value
 ```
 
-Both implementations expose the same append, reset, rollback, length, and
-capacity operations. The runtime releases request caches when generation ends
-or fails.
+Both implementations expose the same write, gathered, reset, rollback, length,
+and capacity operations. A layer write only stores K/V; the runtime commits the
+logical length once per forward pass with `SequenceKVCache.extend()`, so CUDA
+graph replay needs no separate length bookkeeping. The runtime releases request
+caches when generation ends or fails.
 
 ## Environment
 

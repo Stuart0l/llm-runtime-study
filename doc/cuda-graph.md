@@ -18,7 +18,7 @@ CUDA graph replay is enabled by default when all of these conditions hold:
 
 - the engine has `use_cuda_graph=True`;
 - the model and cache are on CUDA;
-- the request uses `SequenceCacheHandle`, the paged-cache implementation; and
+- the request uses `PagedSequenceKVCache`, the paged-cache implementation; and
 - the model derives from `CausalLMBase`, whose decoder and LM-head operations
   are captured directly.
 
@@ -77,7 +77,7 @@ For every replay, the host performs four small operations:
 
 1. copy the next token into the persistent input tensor;
 2. fill the persistent position tensor from the current cache length;
-3. advance the host-visible cache length by one; and
+3. extend the host-visible cache length by one; and
 4. call `CUDAGraph.replay()`.
 
 The device position tensor makes one captured graph valid across changing
@@ -86,10 +86,10 @@ slot for the new K/V values and to pass the effective key length to variable-
 length FlashAttention. The graph therefore keeps fixed tensor shapes and cache
 capacity while attention observes only the valid logical prefix.
 
-Python assignments made by `PagedLayerKVCache.write()` run during capture but
-do not run again during replay. `SequenceCacheHandle.advance()` is consequently
-required to keep the host length synchronized with the device writes. If
-replay raises immediately, the runtime restores the previous host length.
+Layer writes never change the logical length: the runtime commits it with
+`SequenceKVCache.extend()` before the graph runs, so a replay that repeats only
+the device writes still leaves the host length correct. If replay raises
+immediately, the runtime restores the previous host length.
 
 No explicit model warm-up is required before capture. Zero-warm-up correctness
 tests pass for the small dense model and the real GPTQ INT4 and INT8 Qwen

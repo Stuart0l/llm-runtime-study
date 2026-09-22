@@ -75,17 +75,6 @@ class CacheAllocation:
     capacity: int
 
 
-@dataclass(frozen=True, slots=True)
-class LayerKVCacheView:
-    """K/V tensors plus metadata describing their attention layout."""
-
-    keys: torch.Tensor
-    values: torch.Tensor
-    block_table: torch.Tensor | None
-    capacity: int
-
-
-
 class LayerKVCache(Protocol):
     """Storage-independent interface consumed by decoder attention."""
 
@@ -107,25 +96,12 @@ class LayerKVCache(Protocol):
         """Block-paged view, or ``None`` when the storage is not block-paged."""
         ...
 
-    def view(self, *, gathered: bool) -> LayerKVCacheView: ...
-
-    def append(
-        self,
-        keys: torch.Tensor,
-        values: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]: ...
-
 
 class SequenceKVCache(Protocol):
     """Backend-neutral sequence cache consumed by a causal language model."""
 
     spec: KVCacheSpec
     layers: Sequence[LayerKVCache]
-    num_key_value_heads: int
-    head_dim: int
-    dtype: torch.dtype
-    device: torch.device
     capacity: int
 
     @property
@@ -145,9 +121,6 @@ class SequenceKVCache(Protocol):
 
     def reset(self) -> None: ...
     def rollback(self, length: int) -> None: ...
-
-    def ensure_can_append(self, token_count: int) -> None: ...
-    def advance(self, token_count: int) -> None: ...
 
     def batch_layers(
         self, caches: Sequence["SequenceKVCache"]
@@ -172,12 +145,6 @@ class KVCacheManager(Protocol):
 
     @property
     def last_allocation(self) -> CacheAllocation | None: ...
-
-    @property
-    def last_allocation_num_bytes(self) -> int: ...
-
-    @property
-    def last_allocation_capacity(self) -> int: ...
 
     def allocate(self, capacity: int) -> SequenceKVCache: ...
     def release(self, cache: SequenceKVCache) -> None: ...

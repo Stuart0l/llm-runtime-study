@@ -7,7 +7,6 @@ from mini_llm.cache.contracts import (
     KVCacheManager,
     KVCacheSpec,
     LayerKVCache,
-    LayerKVCacheView,
     PagedKV,
     SequenceKVCache,
 )
@@ -21,7 +20,6 @@ __all__ = [
     "KVCacheManager",
     "KVCacheSpec",
     "LayerKVCache",
-    "LayerKVCacheView",
     "PagedKV",
     "SequenceKVCache",
     "create_kv_cache_manager",
