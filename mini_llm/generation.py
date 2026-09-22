@@ -99,7 +99,11 @@ def generate(
     synchronize: Callable[[], None] | None = None,
     cache_manager: KVCacheManager,
     decode_factory: (
-        Callable[[SequenceKVCache], Callable[[torch.Tensor], torch.Tensor]] | None
+        Callable[
+            [Sequence[SequenceKVCache]],
+            Callable[[torch.Tensor], torch.Tensor],
+        ]
+        | None
     ) = None,
 ) -> Iterator[tuple[int, GenerationEvent]]:
     """Generate one or more requests and identify their streamed events."""
@@ -132,7 +136,8 @@ def generate(
 
     def iterate() -> Iterator[tuple[int, GenerationEvent]]:
         active: list[_BatchRequest] = []
-        single_decode: Callable[[torch.Tensor], torch.Tensor] | None = None
+        decode: Callable[[torch.Tensor], torch.Tensor] | None = None
+        decode_caches: tuple[SequenceKVCache, ...] | None = None
         try:
             for index, prompt_token_ids in enumerate(prompts):
                 prompt_length = len(prompt_token_ids)
@@ -226,14 +231,17 @@ def generate(
                     token_ids, dtype=torch.long, device=model.input_device
                 ).unsqueeze(1)
                 with torch.inference_mode():
-                    if len(active) == 1 and decode_factory is not None:
-                        if single_decode is None:
-                            single_decode = decode_factory(active[0].cache)
-                        operation = lambda: single_decode(token_inputs)
+                    caches = tuple(request.cache for request in active)
+                    if decode_factory is not None:
+                        if caches != decode_caches:
+                            # Batch size changed, so we need to rebind the decode graph.
+                            decode = decode_factory(caches)
+                            decode_caches = caches
+                        assert decode is not None
+                        operation = lambda: decode(token_inputs)
                     else:
                         operation = lambda: model.decode(
-                            token_inputs,
-                            caches=tuple(request.cache for request in active),
+                            token_inputs, caches=caches
                         )
                     logits, model_seconds = _run_model_call(operation, synchronize)
                 for row, request in enumerate(active):

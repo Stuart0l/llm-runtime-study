@@ -251,13 +251,13 @@ class EngineTests(unittest.TestCase):
         cache = MagicMock(spec=SequenceCacheHandle)
         input_ids = torch.tensor([[1]])
 
-        engine._make_decode(cache)(input_ids)
+        engine._make_decode((cache,))(input_ids)
 
         paged_decode_graph.assert_not_called()
         model.decode.assert_called_once_with(input_ids, caches=(cache,))
 
     @patch("mini_llm.engine.PagedDecodeGraph")
-    def test_reuses_decode_graph_across_block_counts(
+    def test_reuses_batched_decode_graph_across_block_counts(
         self, paged_decode_graph: MagicMock
     ) -> None:
         model = MagicMock(spec=CausalLMBase)
@@ -273,20 +273,33 @@ class EngineTests(unittest.TestCase):
         first_cache = MagicMock(spec=SequenceCacheHandle)
         first_cache.pool = pool
         first_cache.block_table = torch.tensor([0, 1])
+        first_peer = MagicMock(spec=SequenceCacheHandle)
+        first_peer.pool = pool
+        first_peer.block_table = torch.tensor([2])
         second_cache = MagicMock(spec=SequenceCacheHandle)
         second_cache.pool = pool
-        second_cache.block_table = torch.tensor([2, 3, 4])
+        second_cache.block_table = torch.tensor([3, 4, 5])
+        second_peer = MagicMock(spec=SequenceCacheHandle)
+        second_peer.pool = pool
+        second_peer.block_table = torch.tensor([6, 7])
         paged_decode_graph.return_value.cache.pool = pool
+        paged_decode_graph.return_value.cache.batch_size = 2
 
-        first_decode = engine._make_decode(first_cache)
-        second_decode = engine._make_decode(second_cache)
+        first_batch = (first_cache, first_peer)
+        second_batch = (second_cache, second_peer)
+        first_decode = engine._make_decode(first_batch)
+        second_decode = engine._make_decode(second_batch)
 
-        paged_decode_graph.assert_called_once_with(model, first_cache)
+        paged_decode_graph.assert_called_once_with(model, first_batch)
         paged_decode_graph.return_value.cache.bind.assert_called_once_with(
-            second_cache
+            second_batch
         )
         self.assertIs(first_decode, paged_decode_graph.return_value.replay)
         self.assertIs(second_decode, paged_decode_graph.return_value.replay)
+
+        engine._make_decode((second_cache,))
+        self.assertEqual(paged_decode_graph.call_count, 2)
+        paged_decode_graph.assert_called_with(model, (second_cache,))
 
     def test_rejects_unknown_cache_backend(self) -> None:
         with self.assertRaisesRegex(EngineError, "cache backend"):

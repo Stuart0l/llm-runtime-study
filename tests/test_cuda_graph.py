@@ -30,7 +30,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
         with torch.inference_mode():
             model.prefill(prompt, cache=replay_cache)
             model.prefill(prompt, cache=eager_cache)
-            graph = PagedDecodeGraph(model, replay_cache)
+            graph = PagedDecodeGraph(model, (replay_cache,))
 
             for token in (7, 8):
                 token_input = torch.tensor([[token]], device="cuda")
@@ -41,7 +41,9 @@ class PagedDecodeGraphTests(unittest.TestCase):
         self.assertEqual(replay_cache.length, 4)
         self.assertEqual(eager_cache.length, 4)
 
-        original_first_block = graph.cache.block_table[0].clone()
+        graph_view = graph.cache.layers[0].view(gathered=False)
+        assert graph_view.block_table is not None
+        original_first_block = graph_view.block_table[0, 0].clone()
         pool.release(replay_cache)
         pool.release(eager_cache)
         reserved_cache = pool.allocate(4)
@@ -50,14 +52,14 @@ class PagedDecodeGraphTests(unittest.TestCase):
         prompt = torch.arange(18, device="cuda").remainder(config.vocab_size)[
             None, :
         ]
-        self.assertEqual(graph.cache.block_table.numel(), 2)
+        self.assertEqual(graph_view.block_table.shape, (1, 2))
         self.assertEqual(replay_cache.block_table.numel(), 2)
         self.assertNotEqual(replay_cache.block_table[0], original_first_block)
 
         with torch.inference_mode():
             model.prefill(prompt, cache=replay_cache)
             model.prefill(prompt, cache=eager_cache)
-            graph.cache.bind(replay_cache)
+            graph.cache.bind((replay_cache,))
             for token in (6, 9):
                 token_input = torch.tensor([[token]], device="cuda")
                 actual = graph.replay(token_input).clone()
@@ -67,6 +69,41 @@ class PagedDecodeGraphTests(unittest.TestCase):
         pool.release(reserved_cache)
         pool.release(replay_cache)
         pool.release(eager_cache)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_batched_replay_matches_eager_at_different_lengths(self) -> None:
+        config_data = _config_data()
+        del config_data["quantization_config"]
+        config = Qwen3Config.from_dict(config_data)
+        model = Qwen3ForCausalLM(config).cuda().half().eval()
+        model.requires_grad_(False)
+        model.materialize_derived_buffers(torch.device("cuda"))
+        pool = PagedKVCachePool(config, 96, dtype=torch.float16, device="cuda")
+        replay_caches = (pool.allocate(6), pool.allocate(6))
+        eager_caches = (pool.allocate(6), pool.allocate(6))
+        prompts = (
+            torch.tensor([[1, 4]], device="cuda"),
+            torch.tensor([[2, 5, 3]], device="cuda"),
+        )
+
+        with torch.inference_mode():
+            for prompt, replay_cache, eager_cache in zip(
+                prompts, replay_caches, eager_caches
+            ):
+                model.prefill(prompt, cache=replay_cache)
+                model.prefill(prompt, cache=eager_cache)
+            graph = PagedDecodeGraph(model, replay_caches)
+
+            for tokens in ((7, 8), (9, 6)):
+                token_inputs = torch.tensor(tokens, device="cuda").unsqueeze(1)
+                actual = graph.replay(token_inputs).clone()
+                expected = model.decode(token_inputs, caches=eager_caches)
+                torch.testing.assert_close(actual, expected)
+
+        self.assertEqual(
+            tuple(cache.length for cache in replay_caches),
+            tuple(cache.length for cache in eager_caches),
+        )
 
     @unittest.skipUnless(
         torch.cuda.is_available()
@@ -97,7 +134,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
                     with torch.inference_mode():
                         model.prefill(prompt, cache=replay_cache)
                         model.prefill(prompt, cache=eager_cache)
-                        graph = PagedDecodeGraph(model, replay_cache)
+                        graph = PagedDecodeGraph(model, (replay_cache,))
                         actual = graph.replay(token).clone()
                         expected = model.decode(token, caches=(eager_cache,))
                     torch.testing.assert_close(actual, expected)

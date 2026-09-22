@@ -342,9 +342,9 @@ class GenerationTests(unittest.TestCase):
         model = _FakeModel([2, 3])
         decoder = MagicMock()
 
-        def make_decoder(cache):
+        def make_decoder(caches):
             decoder.side_effect = lambda input_ids: model.decode(
-                input_ids, caches=(cache,)
+                input_ids, caches=caches
             )
             return decoder
 
@@ -363,9 +363,35 @@ class GenerationTests(unittest.TestCase):
 
         decode_factory.assert_called_once()
         decoder.assert_called_once()
-        cache = decode_factory.call_args.args[0]
+        caches = decode_factory.call_args.args[0]
         stream.close()
-        self.assertEqual(model.cache_manager.released, [cache])
+        self.assertEqual(model.cache_manager.released, [caches[0]])
+
+    def test_recreates_batch_decoder_when_active_requests_change(self) -> None:
+        model = _FakeBatchModel()
+        decoded_cache_batches = []
+
+        def make_decoder(caches):
+            decoded_cache_batches.append(caches)
+            return lambda input_ids: model.decode(input_ids, caches=caches)
+
+        list(
+            generate_text(
+                model,
+                _BatchTokenizer(),
+                (
+                    [ChatMessage("user", "first")],
+                    [ChatMessage("user", "second")],
+                ),
+                max_new_tokens=4,
+                sampling=SamplingConfig(temperature=0),
+                cache_manager=model.cache_manager,
+                decode_factory=make_decoder,
+            )
+        )
+
+        self.assertEqual([len(caches) for caches in decoded_cache_batches], [2, 1])
+        self.assertIs(decoded_cache_batches[1][0], decoded_cache_batches[0][1])
 
     def test_stops_at_requested_token_limit(self) -> None:
         model = _FakeModel([2, 3, 2])

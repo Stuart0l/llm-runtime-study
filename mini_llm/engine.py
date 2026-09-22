@@ -240,21 +240,31 @@ class Engine:
         )
 
     def _make_decode(
-        self, cache: SequenceKVCache
+        self, caches: Sequence[SequenceKVCache]
     ) -> Callable[[torch.Tensor], torch.Tensor]:
+        caches = tuple(caches)
+        if not caches:
+            raise EngineError("a decode batch must contain at least one cache")
         if (
             self.use_cuda_graph
             and self.device.type == "cuda"
-            and isinstance(cache, SequenceCacheHandle)
+            and all(isinstance(cache, SequenceCacheHandle) for cache in caches)
             and isinstance(self.model, CausalLMBase)
         ):
-            # Create/Recreate the graph if it is uninitialized or the cache pool has changed.
-            if self._decode_graph is None or self._decode_graph.cache.pool is not cache.pool:
-                self._decode_graph = PagedDecodeGraph(self.model, cache)
+            paged_caches = tuple(caches)
+            first = paged_caches[0]
+            if (
+                # Create/Recreate the graph if it is uninitialized or the cache pool has changed.
+                self._decode_graph is None
+                or self._decode_graph.cache.pool is not first.pool
+                # batch size changed, need to recreate the decode graph
+                or self._decode_graph.cache.batch_size != len(paged_caches)
+            ):
+                self._decode_graph = PagedDecodeGraph(self.model, paged_caches)
             else:
-                self._decode_graph.cache.bind(cache)
+                self._decode_graph.cache.bind(paged_caches)
             return self._decode_graph.replay
-        return lambda input_ids: self.model.decode(input_ids, caches=(cache,))
+        return lambda input_ids: self.model.decode(input_ids, caches=caches)
 
     def _ensure_cache_manager(self) -> KVCacheManager:
         if self._cache_manager is None:

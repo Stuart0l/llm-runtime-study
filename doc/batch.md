@@ -22,7 +22,7 @@ prefill is not implemented; prompts are still prefetched sequentially.
 
 ## Long-context benchmark
 
-Both implementations were measured with the following setup:
+All decode variants were measured with the following setup:
 
 - GPU: NVIDIA GeForce RTX 3070, 8 GiB
 - Model: Qwen3-0.6B FP16
@@ -33,7 +33,7 @@ Both implementations were measured with the following setup:
 - Repetitions: 3
 - Reported values: medians
 
-![Padded SDPA and ragged paged decode performance](../img/batch-decode-performance.png)
+![Padded SDPA, eager paged, and CUDA-graph paged decode performance](../img/batch-decode-performance.png)
 
 `Decode step` is the latency to produce one token for every active request. It
 is also the user-visible inter-token latency for each request in a fixed batch.
@@ -42,24 +42,39 @@ excluded from these decode measurements.
 
 | Batch | Padded SDPA step | Padded SDPA tok/s | Ragged paged step | Ragged paged tok/s | Throughput gain |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2 | 26.22 ms | 76.25 | 23.28 ms | 85.92 | 12.7% |
-| 8 | 45.68 ms | 175.22 | 25.77 ms | 310.45 | 77.2% |
-| 16 | 69.12 ms | 231.63 | 27.52 ms | 581.50 | 151.0% |
+| 2 | 26.22 ms | 76.25 | 23.39 ms | 85.52 | 12.2% |
+| 8 | 45.68 ms | 175.22 | 25.08 ms | 318.96 | 82.0% |
+| 16 | 69.12 ms | 231.63 | 27.69 ms | 577.82 | 149.5% |
 | 24 | 92.16 ms | 260.39 | 29.52 ms | 812.99 | 212.2% |
-| 32 | 115.20 ms | 277.70 | 31.54 ms | 1014.50 | 265.3% |
+| 32 | 115.20 ms | 277.70 | 32.04 ms | 998.68 | 259.6% |
 | 40 | 140.80 ms | 284.39 | 34.45 ms | 1161.04 | 308.3% |
 | 48 | 163.20 ms | 294.40 | 35.82 ms | 1339.92 | 355.1% |
-| 64 | 211.84 ms | 301.68 | 41.54 ms | 1540.67 | 410.7% |
+| 64 | 211.84 ms | 301.68 | 41.82 ms | 1530.38 | 407.3% |
 
-Additional ragged-paged measurements locate its practical saturation point:
+CUDA graph replay captures the complete dense FP16 decode path, including
+paged K/V writes and variable-length FlashAttention. It removes most eager
+kernel-launch overhead:
+
+| Batch | Eager paged step | Graph paged step | Eager paged tok/s | Graph paged tok/s | Graph speedup |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 23.39 ms | 6.56 ms | 85.52 | 304.86 | 3.56x |
+| 8 | 25.08 ms | 7.85 ms | 318.96 | 1019.71 | 3.20x |
+| 16 | 27.69 ms | 9.49 ms | 577.82 | 1686.40 | 2.92x |
+| 32 | 32.04 ms | 12.64 ms | 998.68 | 2531.78 | 2.54x |
+| 64 | 41.82 ms | 18.29 ms | 1530.38 | 3499.26 | 2.29x |
+
+These are steady-state replay measurements; one-time graph capture is excluded.
+The graph is recaptured when early termination changes the active batch size.
+
+Additional eager ragged-paged measurements probe its practical saturation point:
 
 | Batch | Decode step | Decode tok/s | Reserved request cache |
 | ---: | ---: | ---: | ---: |
 | 56 | 38.27 ms | 1463.30 | 3.83 GiB |
-| 64 | 41.54 ms | 1540.67 | 4.38 GiB |
+| 64 | 41.82 ms | 1530.38 | 4.38 GiB |
 | 72 | 44.11 ms | 1632.14 | 4.92 GiB |
 
-Batch 64 to 72 increases aggregate throughput by another 5.9%. The measured
+Batch 64 to 72 increases aggregate throughput by another 6.6%. The measured
 range therefore reaches the GPU memory limit before showing a clear throughput
 plateau: batch 80 could not allocate its fixed KV pool on the 8 GiB GPU.
 
@@ -71,7 +86,7 @@ contiguous padded batch, and expands GQA K/V heads before SDPA. The ragged path
 reads the original cache through each request's block table and logical length.
 It also writes the new K/V states for the whole batch with one operation per
 tensor and layer instead of one operation per request. Together these avoid the
-dominant request-scaled copies and reach 410.7% higher throughput at batch 64.
+dominant request-scaled copies and reach 407.3% higher throughput at batch 64.
 
 Paged attention can show lower sampled GPU utilization while achieving higher
 throughput. Allocated VRAM and GPU utilization measure different things: the
@@ -87,6 +102,8 @@ The remaining 448 MiB is unused pool capacity. Model weights, CUDA state,
 activations, attention workspace, and allocator-retained buffers consume the
 rest of VRAM.
 
-The next optimization targets the remaining eager overhead: reuse batched
-block-table metadata across layers and decode steps, then capture fixed
-batch/metadata buckets with CUDA graphs.
+CUDA graph replay then removes most of the remaining launch overhead. Its
+relative speedup falls from 3.56x at batch 2 to 2.29x at batch 64 as GPU compute
+and memory traffic become a larger fraction of each step. Caching graphs by
+batch size or using fixed-size buckets remains future work for avoiding
+recapture when requests terminate.
