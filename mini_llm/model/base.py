@@ -9,8 +9,7 @@ from typing import ClassVar, Iterable, Self, Sequence
 import torch
 from torch import nn
 
-from mini_llm.cache import LayerKVCache, SequenceKVCache
-from mini_llm.cache.batch import BatchLayerKVCache
+from mini_llm.cache import KVCacheSpec, LayerKVCache, SequenceKVCache
 from mini_llm.checkpoint import (
     CheckpointValidationError,
     SafeTensorCheckpoint,
@@ -173,7 +172,7 @@ class CausalLMBase(nn.Module):
         if input_ids.shape[0] != 1:
             raise ValueError("prefill supports batch size one only")
         sequence_length = input_ids.shape[1]
-        cache.ensure_can_append(sequence_length)
+        cache.extend(sequence_length)
         position_ids = build_position_ids(
             sequence_length,
             device=input_ids.device,
@@ -184,11 +183,6 @@ class CausalLMBase(nn.Module):
                 position_ids=position_ids,
                 layer_caches=cache.layers,
             )
-            if cache.length != sequence_length:
-                raise RuntimeError(
-                    f"KV cache length should be {sequence_length}, "
-                    f"got {cache.length}"
-                )
             # Only the final hidden state predicts the first generated token.
             return self._project_logits(hidden_states[:, -1:, :])
         except Exception:
@@ -220,8 +214,17 @@ class CausalLMBase(nn.Module):
             self._validate_cache(cache)
             if cache.length == 0:
                 raise RuntimeError("prefill every cache before batched decode")
-            cache.ensure_can_append(1)
             previous_lengths.append(cache.length)
+
+        extended: list[SequenceKVCache] = []
+        try:
+            for cache in caches:
+                cache.extend(1)
+                extended.append(cache)
+        except Exception:
+            for cache, previous_length in zip(extended, previous_lengths):
+                cache.rollback(previous_length)
+            raise
 
         position_ids = torch.tensor(
             previous_lengths, dtype=torch.long, device=input_ids.device
@@ -231,25 +234,13 @@ class CausalLMBase(nn.Module):
             # its direct varlen kernel instead of the gathered SDPA fallback.
             layer_caches = caches[0].layers
         else:
-            layer_caches = [
-                BatchLayerKVCache(
-                    [cache.layers[layer_index] for cache in caches]
-                )
-                for layer_index in range(self.config.num_hidden_layers)
-            ]
+            layer_caches = caches[0].batch_layers(caches)
         try:
             hidden_states = self.model(
                 input_ids,
                 position_ids=position_ids,
                 layer_caches=layer_caches,
             )
-            for cache, previous_length in zip(caches, previous_lengths):
-                expected_length = previous_length + 1
-                if cache.length != expected_length:
-                    raise RuntimeError(
-                        f"KV cache length should be {expected_length}, "
-                        f"got {cache.length}"
-                    )
             return self._project_logits(hidden_states)
         except Exception:
             for cache, previous_length in zip(caches, previous_lengths):
@@ -258,24 +249,17 @@ class CausalLMBase(nn.Module):
 
     def _validate_cache(self, cache: SequenceKVCache) -> None:
         parameter = self.model.embed_tokens.weight
-        expected = (
-            self.config.num_key_value_heads,
-            self.config.head_dim,
-            parameter.dtype,
-            parameter.device,
+        expected = KVCacheSpec(
+            num_layers=self.config.num_hidden_layers,
+            num_key_value_heads=self.config.num_key_value_heads,
+            head_dim=self.config.head_dim,
+            dtype=parameter.dtype,
+            device=parameter.device,
         )
-        actual = (
-            cache.num_key_value_heads,
-            cache.head_dim,
-            cache.dtype,
-            cache.device,
-        )
-        expected_layers = self.config.num_hidden_layers
-        if actual != expected or len(cache.layers) != expected_layers:
+        if cache.spec != expected:
             raise ValueError(
-                "cache is incompatible with this model: expected "
-                f"{expected_layers} layers and KV heads/head dim/dtype/device "
-                f"{expected}, got {len(cache.layers)} layers and {actual}"
+                f"cache is incompatible with this model: expected {expected}, "
+                f"got {cache.spec}"
             )
 
     @property

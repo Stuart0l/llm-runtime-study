@@ -6,7 +6,12 @@ from mini_llm.cache.contracts import KVCacheError
 
 
 class SequenceLength:
-    """How many positions of a fixed-capacity cache currently hold valid K/V."""
+    """How many positions of a fixed-capacity cache currently hold valid K/V.
+
+    The count is a host-side Python int. Attention derives its bounds from
+    ``position_ids``, which already lives on the device, so no step of the
+    forward pass reads this value back off a tensor.
+    """
 
     __slots__ = ("capacity", "length")
 

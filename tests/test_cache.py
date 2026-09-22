@@ -4,64 +4,80 @@ import unittest
 
 import torch
 
-from mini_llm.cache import KVCacheError
-from mini_llm.cache.batch import BatchLayerKVCache
+from mini_llm.cache import KVCacheError, KVCacheSpec
 from mini_llm.cache.dense import (
-    DenseKVCache,
     DenseKVCacheManager,
     DenseLayerKVCache,
+    DenseSequenceKVCache,
 )
+from mini_llm.cache.lengths import SequenceLength
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
-from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.cache.paged import PagedBatchLayerKVCache, PagedKVCacheManager
 from mini_llm.model.qwen import Qwen3ForCausalLM
 from tests.test_config import valid_granite_config
 from tests.test_qwen_model import _tiny_config, _tiny_config_data
 
 
+def _dense_layer(
+    *,
+    heads: int,
+    capacity: int,
+    head_dim: int,
+    device: str = "cpu",
+) -> tuple[DenseLayerKVCache, SequenceLength]:
+    lengths = SequenceLength(capacity)
+    shape = (1, heads, capacity, head_dim)
+    keys = torch.zeros(shape, device=device)
+    spec = KVCacheSpec(
+        num_layers=1,
+        num_key_value_heads=heads,
+        head_dim=head_dim,
+        dtype=keys.dtype,
+        device=keys.device,
+    )
+    layer = DenseLayerKVCache(
+        keys,
+        torch.zeros(shape, device=device),
+        lengths,
+        spec,
+    )
+    return layer, lengths
+
+
 class DenseLayerKVCacheTests(unittest.TestCase):
-    def test_append_returns_only_valid_prefix_and_reset_reuses_storage(self) -> None:
-        cache = DenseLayerKVCache(
-            keys=torch.empty(1, 2, 4, 3),
-            values=torch.empty(1, 2, 4, 3),
-        )
+    def test_write_exposes_only_valid_prefix_and_reset_reuses_storage(self) -> None:
+        cache, lengths = _dense_layer(heads=2, capacity=4, head_dim=3)
         keys = torch.arange(12, dtype=torch.float32).view(1, 2, 2, 3)
         values = keys + 100
         key_pointer = cache.keys.data_ptr()
 
-        cached_keys, cached_values = cache.append(
-            keys, values, torch.tensor([[0, 1]])
-        )
+        lengths.extend(2)
+        cache.write(keys, values, torch.tensor([[0, 1]]))
+        gathered = cache.gathered()
 
         self.assertEqual(cache.length, 2)
-        torch.testing.assert_close(cached_keys, keys)
-        torch.testing.assert_close(cached_values, values)
-        cache.reset()
+        torch.testing.assert_close(gathered.keys, keys)
+        torch.testing.assert_close(gathered.values, values)
+        lengths.reset()
         self.assertEqual(cache.length, 0)
         self.assertEqual(cache.keys.data_ptr(), key_pointer)
 
     def test_rejects_context_overflow_before_writing(self) -> None:
-        cache = DenseLayerKVCache(
-            keys=torch.empty(1, 1, 2, 2),
-            values=torch.empty(1, 1, 2, 2),
-        )
-        cache.append(
+        cache, lengths = _dense_layer(heads=1, capacity=2, head_dim=2)
+        lengths.extend(2)
+        cache.write(
             torch.ones(1, 1, 2, 2),
             torch.ones(1, 1, 2, 2),
             torch.tensor([[0, 1]]),
         )
         with self.assertRaisesRegex(KVCacheError, "capacity exceeded"):
-            cache.append(
-                torch.ones(1, 1, 1, 2),
-                torch.ones(1, 1, 1, 2),
-                torch.tensor([[2]]),
-            )
+            lengths.extend(1)
         self.assertEqual(cache.length, 2)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
     def test_tensor_position_write_replays_at_a_new_position(self) -> None:
-        cache = DenseLayerKVCache(
-            keys=torch.zeros(1, 1, 20, 2, device="cuda"),
-            values=torch.zeros(1, 1, 20, 2, device="cuda"),
+        cache, lengths = _dense_layer(
+            heads=1, capacity=20, head_dim=2, device="cuda"
         )
         keys = torch.ones(1, 1, 1, 2, device="cuda")
         values = keys + 1
@@ -71,15 +87,19 @@ class DenseLayerKVCacheTests(unittest.TestCase):
         side_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side_stream):
             for _ in range(3):
-                cache.append(keys, values, position_ids)
-                cache.reset()
+                lengths.extend(1)
+                cache.write(keys, values, position_ids)
+                cache.gathered()
+                lengths.reset()
         torch.cuda.current_stream().wait_stream(side_stream)
 
+        lengths.extend(1)
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            cached_keys, cached_values = cache.append(keys, values, position_ids)
-        self.assertEqual(cached_keys.shape[2], 16)
-        self.assertEqual(cached_values.shape[2], 16)
+            cache.write(keys, values, position_ids)
+            gathered = cache.gathered()
+        self.assertEqual(gathered.keys.shape[2], 16)
+        self.assertEqual(gathered.values.shape[2], 16)
         position_ids.fill_(2)
         keys.fill_(3)
         values.fill_(4)
@@ -89,20 +109,22 @@ class DenseLayerKVCacheTests(unittest.TestCase):
         torch.testing.assert_close(cache.values[:, :, 2], values[:, :, 0])
 
 
-class DenseKVCacheTests(unittest.TestCase):
+class DenseSequenceKVCacheTests(unittest.TestCase):
     def test_allocates_from_granite_decoder_config(self) -> None:
         config = GraniteMoeConfig.from_dict(valid_granite_config())
-        cache = DenseKVCache(
-            config, capacity=2, dtype=torch.float16, device="cpu"
+        spec = KVCacheSpec.from_config(
+            config, dtype=torch.float16, device=torch.device("cpu")
         )
+        cache = DenseSequenceKVCache(spec, capacity=2)
         self.assertEqual(len(cache.layers), 24)
         self.assertEqual(cache.layers[0].keys.shape, (1, 8, 2, 64))
         self.assertEqual(cache.num_bytes, config.kv_cache_bytes(2))
 
     def test_initializes_unwritten_storage_to_zero(self) -> None:
-        cache = DenseKVCache(
-            _tiny_config(), capacity=3, dtype=torch.float32, device="cpu"
+        manager = DenseKVCacheManager(
+            _tiny_config(), 3, dtype=torch.float32, device="cpu"
         )
+        cache = manager.allocate(3)
 
         for layer in cache.layers:
             self.assertEqual(torch.count_nonzero(layer.keys).item(), 0)
@@ -127,12 +149,13 @@ class DenseKVCacheTests(unittest.TestCase):
         manager.release(replacement)
         self.assertEqual(manager.used_tokens, 0)
 
-    def test_advance_updates_all_layer_lengths_after_graph_replay(self) -> None:
-        cache = DenseKVCache(
-            _tiny_config(), capacity=3, dtype=torch.float32, device="cpu"
+    def test_extend_commits_one_length_for_every_layer(self) -> None:
+        manager = DenseKVCacheManager(
+            _tiny_config(), 3, dtype=torch.float32, device="cpu"
         )
+        cache = manager.allocate(3)
 
-        cache.advance(1)
+        cache.extend(1)
 
         self.assertEqual(cache.length, 1)
         self.assertTrue(all(layer.length == 1 for layer in cache.layers))
@@ -145,7 +168,7 @@ class CacheBackendContractTests(unittest.TestCase):
             DenseKVCacheManager(
                 config, capacity, dtype=torch.float32, device="cpu"
             ),
-            PagedKVCachePool(
+            PagedKVCacheManager(
                 config, capacity, dtype=torch.float32, device="cpu"
             ),
         )
@@ -218,7 +241,7 @@ class CacheBackendContractTests(unittest.TestCase):
         model.materialize_derived_buffers(torch.device("cuda"))
         first_tokens = torch.tensor([[1, 4, 7]], device="cuda")
         second_tokens = torch.tensor([[2, 5, 8, 10, 12]], device="cuda")
-        pool = PagedKVCachePool(
+        pool = PagedKVCacheManager(
             model.config, 32, dtype=torch.float16, device="cuda"
         )
         first = pool.allocate(6)
@@ -296,127 +319,149 @@ class CacheBackendContractTests(unittest.TestCase):
         self.assertEqual(model.model.embed_tokens.weight.dtype, torch.float64)
 
 
-class PagedKVCachePoolTests(unittest.TestCase):
-    def test_batch_view_shares_pool_and_pads_block_tables(self) -> None:
-        pool = PagedKVCachePool(
+class PagedKVCacheManagerTests(unittest.TestCase):
+    def test_batch_shares_store_and_pads_block_tables(self) -> None:
+        manager = PagedKVCacheManager(
             _tiny_config(), 10, block_size=2, dtype=torch.float32, device="cpu"
         )
-        first = pool.allocate(3)
-        second = pool.allocate(5)
-        batch = BatchLayerKVCache((first.layers[0], second.layers[0]))
+        first = manager.allocate(3)
+        second = manager.allocate(5)
+        batch = PagedBatchLayerKVCache(manager.store, 0, (first, second))
 
-        view = batch.view(gathered=False)
+        paged = batch.paged()
 
-        self.assertIs(view.keys, pool.keys[0])
-        self.assertIs(view.values, pool.values[0])
-        self.assertEqual(view.capacity, 5)
-        assert view.block_table is not None
-        self.assertEqual(view.block_table.shape, (2, 3))
+        self.assertIs(paged.keys, manager.store.keys[0])
+        self.assertIs(paged.values, manager.store.values[0])
+        self.assertEqual(paged.max_seqlen_k, 6)
+        self.assertEqual(paged.block_table.shape, (2, 3))
         torch.testing.assert_close(
-            view.block_table[0],
+            paged.block_table[0],
             torch.cat((first.block_table, first.block_table.new_zeros(1))),
         )
-        torch.testing.assert_close(view.block_table[1], second.block_table)
+        torch.testing.assert_close(paged.block_table[1], second.block_table)
 
-    def test_append_and_gather_cross_block_boundaries(self) -> None:
+    def test_write_and_gather_cross_block_boundaries(self) -> None:
         config = _tiny_config()
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             config, 6, block_size=2, dtype=torch.float32, device="cpu"
         )
-        handle = pool.allocate(5)
-        self.assertEqual(handle.block_table.tolist(), [0, 1, 2])
-        self.assertEqual(handle.block_table.dtype, torch.int32)
-        self.assertEqual(handle.block_table.device, pool.device)
-        block_table_pointer = handle.block_table.data_ptr()
+        cache = manager.allocate(5)
+        self.assertEqual(cache.block_table.tolist(), [0, 1, 2])
+        self.assertEqual(cache.block_table.dtype, torch.int32)
+        self.assertEqual(cache.block_table.device, manager.spec.device)
+        block_table_pointer = cache.block_table.data_ptr()
         first = torch.arange(12, dtype=torch.float32).view(1, 2, 3, 2)
         second = torch.arange(8, dtype=torch.float32).view(1, 2, 2, 2) + 20
         expected = torch.cat((first, second), dim=2)
-        gathered_keys = gathered_values = None
-        for layer in handle.layers:
-            layer.append(first, first + 100, torch.tensor([[0, 1, 2]]))
-            gathered_keys, gathered_values = layer.append(
-                second, second + 100, torch.tensor([[3, 4]])
-            )
-        assert gathered_keys is not None and gathered_values is not None
-        torch.testing.assert_close(gathered_keys, expected)
-        torch.testing.assert_close(gathered_values, expected + 100)
-        gathered = handle.layers[0].view(gathered=True)
-        scattered = handle.layers[0].view(gathered=False)
+        cache.extend(3)
+        for layer in cache.layers:
+            layer.write(first, first + 100, torch.tensor([[0, 1, 2]]))
+        cache.extend(2)
+        for layer in cache.layers:
+            layer.write(second, second + 100, torch.tensor([[3, 4]]))
+
+        gathered = cache.layers[0].gathered()
+        paged = cache.layers[0].paged()
         torch.testing.assert_close(gathered.keys, expected)
-        self.assertIsNone(gathered.block_table)
-        self.assertIs(scattered.keys, pool.keys[0])
-        self.assertIs(scattered.values, pool.values[0])
-        assert scattered.block_table is not None
-        self.assertEqual(scattered.block_table.data_ptr(), block_table_pointer)
-        self.assertEqual(scattered.capacity, 5)
-        self.assertEqual(handle.block_table.data_ptr(), block_table_pointer)
-        pool.release(handle)
+        torch.testing.assert_close(gathered.values, expected + 100)
+        self.assertIs(paged.keys, manager.store.keys[0])
+        self.assertIs(paged.values, manager.store.values[0])
+        self.assertEqual(paged.max_seqlen_k, 6)
+        self.assertEqual(cache.block_table.data_ptr(), block_table_pointer)
+        manager.release(cache)
+
+    def test_batched_write_matches_single_request_write(self) -> None:
+        manager = PagedKVCacheManager(
+            _tiny_config(), 16, block_size=2, dtype=torch.float32, device="cpu"
+        )
+        for tensor in (*manager.store.keys, *manager.store.values):
+            tensor.zero_()
+        first = manager.allocate(4)
+        second = manager.allocate(4)
+        keys = torch.arange(12, dtype=torch.float32).view(1, 2, 3, 2)
+        positions = torch.tensor([[0, 1, 2]])
+        for cache in (first, second):
+            cache.extend(3)
+            cache.layers[0].write(keys, keys + 100, positions)
+        single_keys = manager.store.keys[0].clone()
+        single_values = manager.store.values[0].clone()
+
+        manager.store.keys[0].zero_()
+        manager.store.values[0].zero_()
+        batch = PagedBatchLayerKVCache(manager.store, 0, (first, second))
+        batched = torch.cat((keys, keys))
+        batch.write(batched, batched + 100, torch.tensor([[0, 1, 2], [0, 1, 2]]))
+
+        torch.testing.assert_close(manager.store.keys[0], single_keys)
+        torch.testing.assert_close(manager.store.values[0], single_values)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
     def test_gather_is_cuda_graph_capturable(self) -> None:
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             _tiny_config(), 4, block_size=2, dtype=torch.float32, device="cuda"
         )
-        handle = pool.allocate(4)
+        cache = manager.allocate(4)
 
         side_stream = torch.cuda.Stream()
         side_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side_stream):
             for _ in range(3):
-                pool._gather(0, handle, 2)
+                manager.store.gather(0, cache.block_table, 2)
         torch.cuda.current_stream().wait_stream(side_stream)
 
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            keys, values = pool._gather(0, handle, 2)
+            gathered = manager.store.gather(0, cache.block_table, 2)
+        keys, values = gathered.keys, gathered.values
         graph.replay()
 
         self.assertEqual(keys.shape, (1, 2, 2, 2))
         self.assertEqual(values.shape, keys.shape)
 
     def test_pool_exhaustion_release_and_deterministic_reuse(self) -> None:
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             _tiny_config(), 4, block_size=2, dtype=torch.float32, device="cpu"
         )
-        first = pool.allocate(2)
-        second = pool.allocate(2)
+        first = manager.allocate(2)
+        second = manager.allocate(2)
         with self.assertRaisesRegex(KVCacheError, "pool exhausted"):
-            pool.allocate(1)
+            manager.allocate(1)
         released_id = first.block_table[0].item()
-        pool.release(first)
-        pool.release(first)
-        replacement = pool.allocate(1)
+        manager.release(first)
+        manager.release(first)
+        replacement = manager.allocate(1)
         self.assertEqual(replacement.block_table.tolist(), [released_id])
         self.assertEqual(second.block_table.tolist(), [1])
 
     def test_reset_rollback_release_and_block_reuse(self) -> None:
         config = _tiny_config()
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             config, 4, block_size=2, dtype=torch.float32, device="cpu"
         )
-        handle = pool.allocate(4)
-        handle.advance(1)
-        self.assertEqual(handle.length, 1)
-        self.assertTrue(all(layer.length == 1 for layer in handle.layers))
-        handle.reset()
+        cache = manager.allocate(4)
+        cache.extend(1)
+        self.assertEqual(cache.length, 1)
+        self.assertTrue(all(layer.length == 1 for layer in cache.layers))
+        cache.reset()
         states = torch.ones(1, 2, 2, 2)
-        for layer in handle.layers:
-            layer.append(states, states, torch.tensor([[0, 1]]))
-        blocks = handle.block_table.clone()
-        handle.rollback(1)
-        handle.reset()
-        torch.testing.assert_close(handle.block_table, blocks)
-        pool.release(handle)
+        cache.extend(2)
+        for layer in cache.layers:
+            layer.write(states, states, torch.tensor([[0, 1]]))
+        blocks = cache.block_table.clone()
+        cache.rollback(1)
+        cache.reset()
+        torch.testing.assert_close(cache.block_table, blocks)
+        manager.release(cache)
         with self.assertRaisesRegex(KVCacheError, "released"):
-            _ = handle.length
-        self.assertEqual(pool.used_blocks, 0)
+            _ = cache.length
+        self.assertEqual(manager.used_blocks, 0)
 
     def test_model_failure_rolls_back_partially_written_layers(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config()).eval()
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             model.config, 4, dtype=torch.float32, device="cpu"
         )
-        cache = pool.allocate(4)
+        cache = manager.allocate(4)
         original_forward = model.model.layers[1].forward
 
         def fail(*args, **kwargs):
@@ -431,14 +476,14 @@ class PagedKVCachePoolTests(unittest.TestCase):
         self.assertEqual(cache.length, 0)
         self.assertTrue(all(layer.length == 0 for layer in cache.layers))
 
-    def test_two_request_handles_keep_independent_model_state(self) -> None:
+    def test_two_request_caches_keep_independent_model_state(self) -> None:
         torch.manual_seed(41)
         model = Qwen3ForCausalLM(_tiny_config()).eval()
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             model.config, 32, dtype=torch.float32, device="cpu"
         )
-        first = pool.allocate(5)
-        second = pool.allocate(5)
+        first = manager.allocate(5)
+        second = manager.allocate(5)
         first_tokens = torch.tensor([[1, 2, 3, 4]])
         second_tokens = torch.tensor([[8, 7, 6]])
         with torch.inference_mode():

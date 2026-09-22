@@ -195,7 +195,7 @@ class QuantizedEngineTests(unittest.TestCase):
                     )
                     self.assertIs(engine._decode_graph, first_graph)
                     self.assertEqual(engine.cache_manager.active_sequences, 0)
-                    self.assertEqual(engine.cache_manager.device.type, "cuda")
+                    self.assertEqual(engine.cache_manager.spec.device.type, "cuda")
                 finally:
                     del engine
                     gc.collect()

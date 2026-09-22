@@ -6,7 +6,7 @@ import unittest
 
 import torch
 
-from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.cache.paged import PagedKVCacheManager
 from mini_llm.config import Qwen3Config
 from mini_llm.cuda_graph import PagedDecodeGraph
 from mini_llm.model.qwen import Qwen3ForCausalLM
@@ -22,7 +22,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
         model = Qwen3ForCausalLM(config).cuda().half().eval()
         model.requires_grad_(False)
         model.materialize_derived_buffers(torch.device("cuda"))
-        pool = PagedKVCachePool(config, 96, dtype=torch.float16, device="cuda")
+        pool = PagedKVCacheManager(config, 96, dtype=torch.float16, device="cuda")
         replay_cache = pool.allocate(4)
         eager_cache = pool.allocate(4)
         prompt = torch.tensor([[1, 4]], device="cuda")
@@ -41,8 +41,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
         self.assertEqual(replay_cache.length, 4)
         self.assertEqual(eager_cache.length, 4)
 
-        graph_view = graph.cache.layers[0].view(gathered=False)
-        assert graph_view.block_table is not None
+        graph_view = graph.cache.layers[0].paged()
         original_first_block = graph_view.block_table[0, 0].clone()
         pool.release(replay_cache)
         pool.release(eager_cache)
@@ -78,7 +77,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
         model = Qwen3ForCausalLM(config).cuda().half().eval()
         model.requires_grad_(False)
         model.materialize_derived_buffers(torch.device("cuda"))
-        pool = PagedKVCachePool(config, 96, dtype=torch.float16, device="cuda")
+        pool = PagedKVCacheManager(config, 96, dtype=torch.float16, device="cuda")
         replay_caches = (pool.allocate(6), pool.allocate(6))
         eager_caches = (pool.allocate(6), pool.allocate(6))
         prompts = (
@@ -121,7 +120,7 @@ class PagedDecodeGraphTests(unittest.TestCase):
                 model.to(device="cuda", dtype=torch.float16)
                 model.prepare_quantized("cuda")
                 model.materialize_derived_buffers(torch.device("cuda"))
-                pool = PagedKVCachePool(
+                pool = PagedKVCacheManager(
                     model.config, 32, dtype=torch.float16, device="cuda"
                 )
                 replay_cache = pool.allocate(4)

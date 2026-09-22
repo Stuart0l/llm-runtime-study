@@ -5,13 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
-from typing import Callable, Iterator, Literal, Sequence
+from typing import Callable, Iterator, Sequence
 
 import torch
 
-from mini_llm.cache import KVCacheManager, SequenceKVCache
-from mini_llm.cache.dense import DenseKVCacheManager
-from mini_llm.cache.paged import PagedKVCachePool, SequenceCacheHandle
+from mini_llm.cache import (
+    CacheBackend,
+    KVCacheManager,
+    SequenceKVCache,
+    create_kv_cache_manager,
+)
+from mini_llm.cache.paged import PagedSequenceKVCache
 from mini_llm.config import DecoderConfig, load_config
 from mini_llm.cuda_graph import PagedDecodeGraph
 from mini_llm.generation import GenerationEvent, generate as generate_text
@@ -25,9 +29,6 @@ from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer, load_tokenizer
 
 class EngineError(ValueError):
     """Raised when an execution device, dtype, or context is unsupported."""
-
-
-CacheBackend = Literal["paged", "dense"]
 
 
 _DTYPES = {
@@ -248,15 +249,15 @@ class Engine:
         if (
             self.use_cuda_graph
             and self.device.type == "cuda"
-            and all(isinstance(cache, SequenceCacheHandle) for cache in caches)
+            and all(isinstance(cache, PagedSequenceKVCache) for cache in caches)
             and isinstance(self.model, CausalLMBase)
         ):
             paged_caches = tuple(caches)
             first = paged_caches[0]
             if (
-                # Create/Recreate the graph if it is uninitialized or the cache pool has changed.
+                # Create/Recreate the graph if it is uninitialized or the cache store has changed.
                 self._decode_graph is None
-                or self._decode_graph.cache.pool is not first.pool
+                or self._decode_graph.cache.store is not first.store
                 # batch size changed, need to recreate the decode graph
                 or self._decode_graph.cache.batch_size != len(paged_caches)
             ):
@@ -268,12 +269,8 @@ class Engine:
 
     def _ensure_cache_manager(self) -> KVCacheManager:
         if self._cache_manager is None:
-            manager_type = (
-                PagedKVCachePool
-                if self.cache_backend == "paged"
-                else DenseKVCacheManager
-            )
-            self._cache_manager = manager_type(
+            self._cache_manager = create_kv_cache_manager(
+                self.cache_backend,
                 self.model.config,
                 self.max_seq_len * self.max_batch_size,
                 dtype=self.dtype,
@@ -287,11 +284,13 @@ class Engine:
 
     @property
     def last_cache_num_bytes(self) -> int:
-        return self._ensure_cache_manager().last_allocation_num_bytes
+        allocation = self._ensure_cache_manager().last_allocation
+        return allocation.num_bytes if allocation is not None else 0
 
     @property
     def last_cache_capacity(self) -> int:
-        return self._ensure_cache_manager().last_allocation_capacity
+        allocation = self._ensure_cache_manager().last_allocation
+        return allocation.capacity if allocation is not None else 0
 
     def allocate_cache(self, capacity: int) -> SequenceKVCache:
         return self._ensure_cache_manager().allocate(capacity)

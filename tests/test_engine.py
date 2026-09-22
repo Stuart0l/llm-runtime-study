@@ -9,7 +9,7 @@ import torch
 
 from tests.reference_support import has_local_checkpoint
 
-from mini_llm.cache.paged import SequenceCacheHandle
+from mini_llm.cache.paged import PagedSequenceKVCache
 from mini_llm.config import GraniteMoeConfig, Qwen3Config
 from mini_llm.engine import (
     Engine,
@@ -201,33 +201,35 @@ class EngineTests(unittest.TestCase):
         load_tokenizer.assert_called_once_with("granite", model_config=config)
         load_model.assert_called_once_with("granite", model_config=config)
 
-    @patch("mini_llm.engine.PagedKVCachePool")
+    @patch("mini_llm.engine.create_kv_cache_manager")
     def test_paged_cache_is_the_default_runtime_backend(
-        self, paged_pool: MagicMock
+        self, create_manager: MagicMock
     ) -> None:
         manager = MagicMock()
-        paged_pool.return_value = manager
+        create_manager.return_value = manager
         engine = self._mock_engine()
 
         self.assertIs(engine.cache_manager, manager)
-        paged_pool.assert_called_once_with(
+        create_manager.assert_called_once_with(
+            "paged",
             engine.model.config,
             256,
             dtype=torch.float32,
             device=torch.device("cpu"),
         )
 
-    @patch("mini_llm.engine.DenseKVCacheManager")
+    @patch("mini_llm.engine.create_kv_cache_manager")
     def test_dense_cache_backend_is_runtime_selectable(
-        self, dense_manager: MagicMock
+        self, create_manager: MagicMock
     ) -> None:
         manager = MagicMock()
-        dense_manager.return_value = manager
+        create_manager.return_value = manager
         engine = self._mock_engine()
         engine.cache_backend = "dense"
 
         self.assertIs(engine.cache_manager, manager)
-        dense_manager.assert_called_once_with(
+        create_manager.assert_called_once_with(
+            "dense",
             engine.model.config,
             256,
             dtype=torch.float32,
@@ -248,7 +250,7 @@ class EngineTests(unittest.TestCase):
             load_seconds=0.0,
             use_cuda_graph=False,
         )
-        cache = MagicMock(spec=SequenceCacheHandle)
+        cache = MagicMock(spec=PagedSequenceKVCache)
         input_ids = torch.tensor([[1]])
 
         engine._make_decode((cache,))(input_ids)
@@ -269,20 +271,20 @@ class EngineTests(unittest.TestCase):
             max_seq_len=32,
             load_seconds=0.0,
         )
-        pool = MagicMock()
-        first_cache = MagicMock(spec=SequenceCacheHandle)
-        first_cache.pool = pool
+        store = MagicMock()
+        first_cache = MagicMock(spec=PagedSequenceKVCache)
+        first_cache.store = store
         first_cache.block_table = torch.tensor([0, 1])
-        first_peer = MagicMock(spec=SequenceCacheHandle)
-        first_peer.pool = pool
+        first_peer = MagicMock(spec=PagedSequenceKVCache)
+        first_peer.store = store
         first_peer.block_table = torch.tensor([2])
-        second_cache = MagicMock(spec=SequenceCacheHandle)
-        second_cache.pool = pool
+        second_cache = MagicMock(spec=PagedSequenceKVCache)
+        second_cache.store = store
         second_cache.block_table = torch.tensor([3, 4, 5])
-        second_peer = MagicMock(spec=SequenceCacheHandle)
-        second_peer.pool = pool
+        second_peer = MagicMock(spec=PagedSequenceKVCache)
+        second_peer.store = store
         second_peer.block_table = torch.tensor([6, 7])
-        paged_decode_graph.return_value.cache.pool = pool
+        paged_decode_graph.return_value.cache.store = store
         paged_decode_graph.return_value.cache.batch_size = 2
 
         first_batch = (first_cache, first_peer)
@@ -325,16 +327,17 @@ class EngineTests(unittest.TestCase):
                 max_new_tokens=1,
             )
 
-    @patch("mini_llm.engine.PagedKVCachePool")
+    @patch("mini_llm.engine.create_kv_cache_manager")
     def test_batch_size_scales_cache_pool_capacity(
-        self, paged_pool: MagicMock
+        self, create_manager: MagicMock
     ) -> None:
         engine = self._mock_engine()
         engine.max_batch_size = 3
 
         _ = engine.cache_manager
 
-        paged_pool.assert_called_once_with(
+        create_manager.assert_called_once_with(
+            "paged",
             engine.model.config,
             768,
             dtype=torch.float32,
@@ -499,7 +502,7 @@ class MPSEngineIntegrationTests(unittest.TestCase):
             engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
         )
         self.assertEqual(engine.cache_manager.active_sequences, 0)
-        self.assertEqual(engine.cache_manager.device.type, "mps")
+        self.assertEqual(engine.cache_manager.spec.device.type, "mps")
 
     @unittest.skipUnless(
         torch.backends.mps.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),
@@ -602,7 +605,7 @@ class CUDAEngineIntegrationTests(unittest.TestCase):
             engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
         )
         self.assertEqual(engine.cache_manager.active_sequences, 0)
-        self.assertEqual(engine.cache_manager.device.type, "cuda")
+        self.assertEqual(engine.cache_manager.spec.device.type, "cuda")
 
     @unittest.skipUnless(
         torch.cuda.is_available() and has_local_checkpoint(QWEN_MODEL_DIR),

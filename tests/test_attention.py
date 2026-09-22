@@ -8,8 +8,10 @@ import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn import functional as F
 
+from mini_llm.cache import KVCacheSpec
 from mini_llm.cache.dense import DenseLayerKVCache
-from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.cache.lengths import SequenceLength
+from mini_llm.cache.paged import PagedKVCacheManager
 from mini_llm.nn import GraniteAttention, Qwen3Attention, repeat_kv_heads
 
 
@@ -18,6 +20,28 @@ def _identity_rope_tables(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     shape = (batch_size, sequence_length, head_dim)
     return torch.ones(shape), torch.zeros(shape)
+
+
+def _dense_layer(
+    *,
+    capacity: int,
+    head_dim: int,
+    heads: int = 1,
+    device: str = "cpu",
+    dtype: torch.dtype = torch.float32,
+) -> tuple[DenseLayerKVCache, SequenceLength]:
+    lengths = SequenceLength(capacity)
+    shape = (1, heads, capacity, head_dim)
+    keys = torch.zeros(shape, device=device, dtype=dtype)
+    spec = KVCacheSpec(
+        num_layers=1,
+        num_key_value_heads=heads,
+        head_dim=head_dim,
+        dtype=keys.dtype,
+        device=keys.device,
+    )
+    values = torch.zeros(shape, device=device, dtype=dtype)
+    return DenseLayerKVCache(keys, values, lengths, spec), lengths
 
 
 class RepeatKVHeadsTests(unittest.TestCase):
@@ -216,12 +240,10 @@ class GraniteAttentionTests(unittest.TestCase):
         ).eval()
         inputs = torch.randn(1, 3, 4)
         cosine, sine = _identity_rope_tables(1, 3, 2)
-        cache = DenseLayerKVCache(
-            keys=torch.empty(1, 1, 3, 2),
-            values=torch.empty(1, 1, 3, 2),
-        )
+        cache, lengths = _dense_layer(capacity=3, head_dim=2)
 
         reference = attention(inputs, cosine, sine)
+        lengths.extend(2)
         prefill = attention(
             inputs[:, :2],
             cosine[:, :2],
@@ -229,6 +251,7 @@ class GraniteAttentionTests(unittest.TestCase):
             position_ids=torch.tensor([[0, 1]]),
             cache=cache,
         )
+        lengths.extend(1)
         decode = attention(
             inputs[:, 2:],
             cosine[:, 2:],
@@ -251,9 +274,8 @@ class GraniteAttentionTests(unittest.TestCase):
             head_dim=64,
             attention_scale=0.125,
         ).cuda().half().eval()
-        cache = DenseLayerKVCache(
-            keys=torch.zeros(1, 1, 4, 64, device="cuda", dtype=torch.float16),
-            values=torch.zeros(1, 1, 4, 64, device="cuda", dtype=torch.float16),
+        cache, lengths = _dense_layer(
+            capacity=4, head_dim=64, device="cuda", dtype=torch.float16
         )
         inputs = torch.randn(1, 1, 128, device="cuda", dtype=torch.float16)
         cosine, sine = _identity_rope_tables(1, 1, 64)
@@ -266,6 +288,7 @@ class GraniteAttentionTests(unittest.TestCase):
             side_stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(side_stream):
                 for _ in range(3):
+                    lengths.extend(1)
                     attention(
                         inputs,
                         cosine,
@@ -273,9 +296,10 @@ class GraniteAttentionTests(unittest.TestCase):
                         position_ids=position_ids,
                         cache=cache,
                     )
-                    cache.reset()
+                    lengths.reset()
             torch.cuda.current_stream().wait_stream(side_stream)
 
+            lengths.extend(1)
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph):
                 output = attention(
@@ -290,11 +314,13 @@ class GraniteAttentionTests(unittest.TestCase):
             graph.replay()
             replayed = output.clone()
 
-            reference_cache = DenseLayerKVCache(
-                keys=cache.keys.clone(),
-                values=cache.values.clone(),
-                length=2,
+            reference_cache, reference_lengths = _dense_layer(
+                capacity=4, head_dim=64, device="cuda", dtype=torch.float16
             )
+            reference_cache.keys.copy_(cache.keys)
+            reference_cache.values.copy_(cache.values)
+            reference_lengths.extend(2)
+            reference_lengths.extend(1)
             expected = attention(
                 inputs,
                 cosine,
@@ -314,11 +340,10 @@ class GraniteAttentionTests(unittest.TestCase):
             head_dim=64,
             attention_scale=0.125,
         ).cuda().half().eval()
-        dense_cache = DenseLayerKVCache(
-            keys=torch.zeros(1, 1, 20, 64, device="cuda", dtype=torch.float16),
-            values=torch.zeros(1, 1, 20, 64, device="cuda", dtype=torch.float16),
+        dense_cache, dense_lengths = _dense_layer(
+            capacity=20, head_dim=64, device="cuda", dtype=torch.float16
         )
-        pool = PagedKVCachePool(
+        manager = PagedKVCacheManager(
             SimpleNamespace(
                 max_position_embeddings=32,
                 num_hidden_layers=1,
@@ -329,14 +354,15 @@ class GraniteAttentionTests(unittest.TestCase):
             dtype=torch.float16,
             device="cuda",
         )
-        paged_handle = pool.allocate(20)
-        paged_cache = paged_handle.layers[0]
+        paged_sequence = manager.allocate(20)
+        paged_cache = paged_sequence.layers[0]
         inputs = torch.randn(1, 17, 128, device="cuda", dtype=torch.float16)
         cosine, sine = _identity_rope_tables(1, 17, 64)
         cosine = cosine.cuda().half()
         sine = sine.cuda().half()
         positions = torch.arange(17, device="cuda").unsqueeze(0)
 
+        dense_lengths.extend(17)
         with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
             dense_prefill = attention(
                 inputs,
@@ -345,6 +371,7 @@ class GraniteAttentionTests(unittest.TestCase):
                 position_ids=positions,
                 cache=dense_cache,
             )
+        paged_sequence.extend(17)
         paged_prefill = attention(
             inputs,
             cosine,
@@ -358,6 +385,7 @@ class GraniteAttentionTests(unittest.TestCase):
         decode_cosine = decode_cosine.cuda().half()
         decode_sine = decode_sine.cuda().half()
         decode_position = torch.tensor([[17]], device="cuda")
+        dense_lengths.extend(1)
         with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
             dense_decode = attention(
                 decode_input,
@@ -366,6 +394,7 @@ class GraniteAttentionTests(unittest.TestCase):
                 position_ids=decode_position,
                 cache=dense_cache,
             )
+        paged_sequence.extend(1)
         paged_decode = attention(
             decode_input,
             decode_cosine,
@@ -390,6 +419,7 @@ class GraniteAttentionTests(unittest.TestCase):
         side_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side_stream):
             for _ in range(3):
+                paged_sequence.extend(1)
                 attention(
                     graph_input,
                     decode_cosine,
@@ -397,9 +427,10 @@ class GraniteAttentionTests(unittest.TestCase):
                     position_ids=graph_position,
                     cache=paged_cache,
                 )
-                paged_handle.rollback(18)
+                paged_sequence.rollback(18)
         torch.cuda.current_stream().wait_stream(side_stream)
 
+        paged_sequence.extend(1)
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             graph_output = attention(
@@ -415,6 +446,7 @@ class GraniteAttentionTests(unittest.TestCase):
         replayed = graph_output.clone()
 
         with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            dense_lengths.extend(1)
             attention(
                 captured_input,
                 decode_cosine,
@@ -422,6 +454,7 @@ class GraniteAttentionTests(unittest.TestCase):
                 position_ids=torch.tensor([[18]], device="cuda"),
                 cache=dense_cache,
             )
+            dense_lengths.extend(1)
             expected = attention(
                 graph_input,
                 decode_cosine,

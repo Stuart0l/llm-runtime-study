@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 from mini_llm.model.contracts import RuntimeCausalLM
-from mini_llm.cache.paged import PagedKVCachePool
+from mini_llm.cache.paged import PagedKVCacheManager
 from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer
 
 
@@ -55,7 +55,7 @@ def run_mini_runtime(
 ) -> InferenceTrace:
     capacity = input_ids.shape[1] + generated_tokens
     parameter = model.model.embed_tokens.weight
-    manager = PagedKVCachePool(
+    manager = PagedKVCacheManager(
         model.config, capacity, dtype=parameter.dtype, device=parameter.device
     )
     cache = manager.allocate(capacity)

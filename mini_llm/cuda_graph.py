@@ -2,50 +2,37 @@
 
 from __future__ import annotations
 
+import math
+
 from collections.abc import Sequence
 
 import torch
 
-from mini_llm.cache.batch import BatchLayerKVCache
-from mini_llm.cache.paged import SequenceCacheHandle
+from mini_llm.cache.paged import PagedBatchLayerKVCache, PagedSequenceKVCache
 from mini_llm.model.base import CausalLMBase
 
 
 class PagedGraphCache:
     """Bridge fixed graph metadata to a batch of request caches."""
 
-    def __init__(self, caches: Sequence[SequenceCacheHandle]) -> None:
+    def __init__(
+        self, caches: Sequence[PagedSequenceKVCache], max_blocks: int
+    ) -> None:
         if not caches:
             raise ValueError("a graph cache batch must contain at least one request")
-        self.pool = caches[0].pool
+        self.store = caches[0].store
         self.batch_size = len(caches)
-        max_blocks = (
-            self.pool.max_sequence_length + self.pool.block_size - 1
-        ) // self.pool.block_size  # maximum blocks each request can take
-        capture_caches: list[SequenceCacheHandle] = []
-        for cache in caches:
-            block_table = cache.block_table.new_zeros(max_blocks)
-            # Capture cache does not contain real K/V data, it's only used to capture the CUDA graph.
-            capture_cache = SequenceCacheHandle(
-                self.pool,
-                self.pool.max_sequence_length,
-                block_table,
-            )
-            capture_caches.append(capture_cache)
+        # Capture must see the widest block table a request can ever use, so
+        # every later bind fits into the tensors the graph recorded.
         self.layers = [
-            BatchLayerKVCache(
-                [cache.layers[layer_index] for cache in capture_caches]
+            PagedBatchLayerKVCache(
+                self.store, layer_index, caches, block_table_capacity=max_blocks
             )
-            for layer_index in range(self.pool.num_layers)
+            for layer_index in range(self.store.spec.num_layers)
         ]
-        self._block_tables = []
-        for layer in self.layers:
-            view = layer.view(gathered=False)
-            assert view.block_table is not None
-            self._block_tables.append(view.block_table)
         self.bind(caches)
 
-    def bind(self, caches: Sequence[SequenceCacheHandle]) -> None:
+    def bind(self, caches: Sequence[PagedSequenceKVCache]) -> None:
         """Rebind captured metadata buffers to another compatible request batch.
 
         CUDA graph replay requires the captured block-table tensor addresses to
@@ -65,14 +52,12 @@ class PagedGraphCache:
             raise ValueError(
                 f"graph batch size is {self.batch_size}, got {len(caches)} caches"
             )
-        if any(cache.pool is not self.pool for cache in caches):
-            raise ValueError("graph caches must use the captured paged pool")
+        if any(cache.store is not self.store for cache in caches):
+            raise ValueError("graph caches must use the captured paged store")
         if any(cache.length == 0 for cache in caches):
             raise ValueError("prefill every cache before binding it to a graph")
-        for block_table in self._block_tables:
-            block_table.zero_()
-            for row, cache in zip(block_table, caches):
-                row[: cache.block_table.numel()].copy_(cache.block_table)
+        for layer in self.layers:
+            layer.rebind(caches)
         self.requests = caches
 
     @property
@@ -81,13 +66,19 @@ class PagedGraphCache:
 
     @property
     def device(self) -> torch.device:
-        return self.pool.device
+        return self.store.spec.device
 
-    def advance(self, token_count: int) -> None:
-        for cache in self.requests:
-            cache.ensure_can_append(token_count)
-        for cache in self.requests:
-            cache.advance(token_count)
+    def extend(self, token_count: int) -> None:
+        previous_lengths = self.lengths
+        extended: list[PagedSequenceKVCache] = []
+        try:
+            for cache in self.requests:
+                cache.extend(token_count)
+                extended.append(cache)
+        except Exception:
+            for cache, length in zip(extended, previous_lengths):
+                cache.rollback(length)
+            raise
 
     def rollback(self, lengths: Sequence[int]) -> None:
         for cache, length in zip(self.requests, lengths):
@@ -100,22 +91,27 @@ class PagedDecodeGraph:
     def __init__(
         self,
         model: CausalLMBase,
-        caches: Sequence[SequenceCacheHandle],
+        caches: Sequence[PagedSequenceKVCache],
     ) -> None:
         if not caches:
             raise ValueError("a decode graph batch must contain at least one cache")
         first = caches[0]
-        if model.input_device.type != "cuda" or first.device.type != "cuda":
+        store = first.store
+        device = store.spec.device
+        if model.input_device.type != "cuda" or device.type != "cuda":
             raise ValueError("paged decode graphs require a CUDA model and cache")
-        if model.input_device != first.device:
+        if model.input_device != device:
             raise ValueError("model and cache must use the same CUDA device")
 
-        self.cache = PagedGraphCache(caches)
+        max_blocks = math.ceil(
+            model.config.max_position_embeddings / store.block_size
+        )
+        self.cache = PagedGraphCache(caches, max_blocks)
         self.input_ids = torch.zeros(
-            (self.cache.batch_size, 1), dtype=torch.long, device=first.device
+            (self.cache.batch_size, 1), dtype=torch.long, device=device
         )
         self.position_ids = torch.tensor(
-            self.cache.lengths, dtype=torch.long, device=first.device
+            self.cache.lengths, dtype=torch.long, device=device
         ).unsqueeze(1)
 
         self.graph = torch.cuda.CUDAGraph()
@@ -146,7 +142,7 @@ class PagedDecodeGraph:
                 device=self.cache.device,
             ).unsqueeze(1)
         )
-        self.cache.advance(1)
+        self.cache.extend(1)
         try:
             self.graph.replay()
         except Exception:
