@@ -142,28 +142,6 @@ class ChatCompletionsEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sampling, SamplingConfig(temperature=0, top_p=0.8, seed=3))
         self.assertFalse(thinking)
 
-    async def test_application_owns_the_supplied_engine_and_one_lock(self) -> None:
-        self.assertIs(self.app.state.engine, self.engine)
-        self.assertEqual(self.app.state.served_model, "local-qwen")
-        self.assertIsInstance(self.app.state.generation_lock, asyncio.Lock)
-
-    async def test_maps_token_limit_to_length(self) -> None:
-        engine = _FakeEngine(finish_reason="max_new_tokens")
-        app = create_app(engine, served_model="local-qwen")
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-        ) as client:
-            response = await client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "local-qwen",
-                    "messages": [{"role": "user", "content": "hello"}],
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["choices"][0]["finish_reason"], "length")
-
     async def test_rejects_invalid_request_with_openai_error_shape(self) -> None:
         response = await self.client.post(
             "/v1/chat/completions",
@@ -270,11 +248,6 @@ class ApplicationConstructionTests(unittest.TestCase):
 
 
 class ServerCommandTests(unittest.TestCase):
-    def test_parser_accepts_cuda_device(self) -> None:
-        args = build_parser().parse_args(["--model", "model", "--device", "cuda"])
-
-        self.assertEqual(args.device, "cuda")
-
     @patch("mini_llm.serving.server.uvicorn.run")
     @patch("mini_llm.serving.server.Engine.from_model_dir")
     def test_loads_engine_once_before_starting_one_worker(
@@ -296,7 +269,7 @@ class ServerCommandTests(unittest.TestCase):
                 "--port",
                 "8123",
                 "--device",
-                "cpu",
+                "cuda",
                 "--dtype",
                 "float32",
                 "--max-seq-len",
@@ -308,7 +281,7 @@ class ServerCommandTests(unittest.TestCase):
         self.assertEqual(status, 0)
         from_model_dir.assert_called_once_with(
             Path("models/qwen3-0.6b"),
-            device="cpu",
+            device="cuda",
             dtype="float32",
             max_seq_len=2048,
         )

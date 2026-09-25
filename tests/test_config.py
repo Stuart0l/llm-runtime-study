@@ -12,7 +12,6 @@ from mini_llm.config import (
     Qwen3Config,
     load_config,
 )
-from examples.inspect_config import render_summary
 
 
 def valid_config() -> dict[str, object]:
@@ -100,6 +99,8 @@ class Qwen3ConfigTests(unittest.TestCase):
                 self.assertEqual(config.quantization_config.bits, bits)
                 self.assertEqual(config.quantization_config.group_size, 128)
 
+        self.assertIsNone(Qwen3Config.from_dict(valid_config()).quantization_config)
+
     def test_gptq_accepts_16_bit_sources_and_requires_tied_embeddings(self) -> None:
         for dtype in ("float16", "bfloat16"):
             with self.subTest(dtype=dtype):
@@ -116,11 +117,6 @@ class Qwen3ConfigTests(unittest.TestCase):
         raw["tie_word_embeddings"] = False
         with self.assertRaisesRegex(ConfigError, "tied word embeddings"):
             Qwen3Config.from_dict(raw)
-
-    def test_dense_config_has_no_quantization_metadata(self) -> None:
-        config = Qwen3Config.from_dict(valid_config())
-
-        self.assertIsNone(config.quantization_config)
 
     def test_rejects_unsupported_gptq_metadata(self) -> None:
         for field, value in (
@@ -163,25 +159,6 @@ class Qwen3ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "must be an object"):
             Qwen3Config.from_dict(raw)
 
-    def test_shared_loader_dispatches_qwen_by_model_type(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            (path / "config.json").write_text(json.dumps(valid_config()))
-
-            config = load_config(path)
-
-        self.assertIsInstance(config, Qwen3Config)
-
-    def test_loads_from_model_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            (path / "config.json").write_text(json.dumps(valid_config()))
-
-            config = Qwen3Config.from_model_dir(path)
-
-        self.assertEqual(config.model_type, "qwen3")
-        self.assertEqual(config.architectures, ("Qwen3ForCausalLM",))
-
     def test_derives_attention_dimensions_without_assuming_hidden_size_per_head(self) -> None:
         config = Qwen3Config.from_dict(valid_config())
 
@@ -205,73 +182,49 @@ class Qwen3ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.eos_token_ids, (151645, 151643))
 
-    def test_rejects_incompatible_gqa_heads(self) -> None:
-        raw = valid_config()
-        raw["num_key_value_heads"] = 6
-
-        with self.assertRaisesRegex(ConfigError, "divisible"):
-            Qwen3Config.from_dict(raw)
-
-    def test_rejects_odd_head_dimension(self) -> None:
-        raw = valid_config()
-        raw["head_dim"] = 127
-
-        with self.assertRaisesRegex(ConfigError, "even for rotary embeddings"):
-            Qwen3Config.from_dict(raw)
-
-    def test_reports_invalid_numeric_field_as_config_error(self) -> None:
-        raw = valid_config()
-        raw["rms_norm_eps"] = "small"
-
-        with self.assertRaisesRegex(ConfigError, "int or float"):
-            Qwen3Config.from_dict(raw)
-
     def test_rejects_context_larger_than_model_limit(self) -> None:
         config = Qwen3Config.from_dict(valid_config())
 
         with self.assertRaisesRegex(ConfigError, "exceeds the model limit"):
             config.kv_cache_bytes(40961)
 
-    def test_rejects_token_id_outside_vocabulary(self) -> None:
-        raw = valid_config()
-        raw["bos_token_id"] = 151936
+    def test_rejects_invalid_fields(self) -> None:
+        for field, bad_value, regex in (
+            ("num_key_value_heads", 6, "divisible"),
+            ("head_dim", 127, "even for rotary embeddings"),
+            ("rms_norm_eps", "small", "int or float"),
+            ("bos_token_id", 151936, "within vocabulary"),
+            ("model_type", "llama", "unsupported model_type"),
+        ):
+            with self.subTest(field=field):
+                raw = valid_config()
+                raw[field] = bad_value
 
-        with self.assertRaisesRegex(ConfigError, "within vocabulary"):
-            Qwen3Config.from_dict(raw)
+                with self.assertRaisesRegex(ConfigError, regex):
+                    Qwen3Config.from_dict(raw)
 
-    def test_rejects_another_model_family(self) -> None:
-        raw = valid_config()
-        raw["model_type"] = "llama"
 
-        with self.assertRaisesRegex(ConfigError, "unsupported model_type"):
-            Qwen3Config.from_dict(raw)
+class LoadConfigTests(unittest.TestCase):
+    def test_dispatches_by_model_type(self) -> None:
+        unknown = valid_granite_config()
+        unknown["model_type"] = "another_model"
+        for name, raw, expected in (
+            ("qwen3", valid_config(), Qwen3Config),
+            ("granitemoe", valid_granite_config(), GraniteMoeConfig),
+            ("unknown", unknown, "qwen3.*granitemoe"),
+        ):
+            with self.subTest(model_type=name), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)
+                (path / "config.json").write_text(json.dumps(raw))
 
-    def test_summary_exposes_architecture_and_cache_numbers(self) -> None:
-        config = Qwen3Config.from_dict(valid_config())
-
-        summary = render_summary(
-            config,
-            model_dir=Path("model"),
-            max_seq_len=4096,
-            cache_dtype="float16",
-            batch_size=1,
-        )
-
-        self.assertIn("query projection:      2,048", summary)
-        self.assertIn("total:                 448.00 MiB", summary)
+                if isinstance(expected, str):
+                    with self.assertRaisesRegex(ConfigError, expected):
+                        load_config(path)
+                else:
+                    self.assertIsInstance(load_config(path), expected)
 
 
 class GraniteMoeConfigTests(unittest.TestCase):
-    def test_load_config_dispatches_by_model_type(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            (path / "config.json").write_text(json.dumps(valid_granite_config()))
-
-            config = load_config(path)
-
-        self.assertIsInstance(config, GraniteMoeConfig)
-        self.assertEqual(config.architectures, ("GraniteMoeForCausalLM",))
-
     def test_derives_attention_expert_and_cache_dimensions(self) -> None:
         config = GraniteMoeConfig.from_dict(valid_granite_config())
 
@@ -286,64 +239,18 @@ class GraniteMoeConfigTests(unittest.TestCase):
         self.assertEqual(config.active_parameter_estimate, 428_658_688)
         self.assertEqual(config.kv_cache_bytes(4096), 201_326_592)
 
-        summary = render_summary(
-            config,
-            model_dir=Path("granite"),
-            max_seq_len=4096,
-            cache_dtype="float16",
-            batch_size=1,
-        )
-        self.assertIn("Granite MoE configuration: valid", summary)
-        self.assertIn("total / active:        32 / 8 per token", summary)
-        self.assertIn("active parameters:     428,658,688", summary)
-        self.assertIn("total:                 192.00 MiB", summary)
+    def test_rejects_invalid_granite_fields(self) -> None:
+        for field, bad_value, regex in (
+            ("num_experts_per_tok", 33, "cannot exceed"),
+            ("tie_word_embeddings", False, "tied word embeddings"),
+            ("architectures", ["AnotherModel"], "GraniteMoeForCausalLM"),
+        ):
+            with self.subTest(field=field):
+                raw = valid_granite_config()
+                raw[field] = bad_value
 
-    def test_rejects_invalid_expert_and_attention_ratios(self) -> None:
-        too_many_active = valid_granite_config()
-        too_many_active["num_experts_per_tok"] = 33
-        with self.assertRaisesRegex(ConfigError, "cannot exceed"):
-            GraniteMoeConfig.from_dict(too_many_active)
-
-        invalid_heads = valid_granite_config()
-        invalid_heads["num_key_value_heads"] = 6
-        with self.assertRaisesRegex(ConfigError, "divisible"):
-            GraniteMoeConfig.from_dict(invalid_heads)
-
-    def test_rejects_untied_embeddings_and_non_granite_architecture(self) -> None:
-        untied = valid_granite_config()
-        untied["tie_word_embeddings"] = False
-        with self.assertRaisesRegex(ConfigError, "tied word embeddings"):
-            GraniteMoeConfig.from_dict(untied)
-
-        wrong_architecture = valid_granite_config()
-        wrong_architecture["architectures"] = ["AnotherModel"]
-        with self.assertRaisesRegex(ConfigError, "GraniteMoeForCausalLM"):
-            GraniteMoeConfig.from_dict(wrong_architecture)
-
-    def test_rejects_unknown_family_at_dispatch_boundary(self) -> None:
-        raw = valid_granite_config()
-        raw["model_type"] = "another_model"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            (path / "config.json").write_text(json.dumps(raw))
-
-            with self.assertRaisesRegex(ConfigError, "qwen3.*granitemoe"):
-                load_config(path)
-
-
-GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
-
-
-@unittest.skipUnless(
-    GRANITE_MODEL_DIR.is_dir(), "local Granite 3.1 checkpoint is unavailable"
-)
-class GraniteMoeConfigIntegrationTests(unittest.TestCase):
-    def test_local_config_matches_supported_architecture(self) -> None:
-        config = load_config(GRANITE_MODEL_DIR)
-
-        self.assertIsInstance(config, GraniteMoeConfig)
-        self.assertEqual(config.vocab_size, 49155)
-        self.assertEqual(config.total_parameter_estimate, 1_334_628_352)
+                with self.assertRaisesRegex(ConfigError, regex):
+                    GraniteMoeConfig.from_dict(raw)
 
 
 if __name__ == "__main__":

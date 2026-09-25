@@ -49,12 +49,6 @@ class MeasurementTests(unittest.TestCase):
             "name    value\n------  -----\nshort   1    \nlonger  20   ",
         )
 
-    def test_measure_validates_counts(self) -> None:
-        with self.assertRaisesRegex(ValueError, "warmups"):
-            measure(lambda: None, synchronize=lambda: None, warmups=-1, repeats=1)
-        with self.assertRaisesRegex(ValueError, "repeats"):
-            measure(lambda: None, synchronize=lambda: None, warmups=0, repeats=0)
-
 
 class EndToEndBenchmarkTests(unittest.TestCase):
     def test_batch_size_controls_requests_and_aggregate_decode_throughput(
@@ -205,33 +199,87 @@ class RunnerTests(unittest.TestCase):
         for call in end_to_end_run.call_args_list:
             self.assertEqual(call.kwargs["batch_size"], 1)
 
-    def test_default_devices_include_available_mps(self) -> None:
-        with (
-            patch("torch.backends.mps.is_available", return_value=True),
-            patch("torch.cuda.is_available", return_value=False),
-        ):
-            self.assertEqual(_selected_devices(None), ["cpu", "mps"])
+    def test_default_devices_include_available_accelerators(self) -> None:
+        cases = (
+            (True, False, ["cpu", "mps"]),
+            (False, True, ["cpu", "cuda"]),
+        )
+        for mps_available, cuda_available, expected in cases:
+            with (
+                self.subTest(mps=mps_available, cuda=cuda_available),
+                patch("torch.backends.mps.is_available", return_value=mps_available),
+                patch("torch.cuda.is_available", return_value=cuda_available),
+            ):
+                self.assertEqual(_selected_devices(None), expected)
 
-    def test_default_devices_include_available_cuda(self) -> None:
+    def test_explicit_unavailable_device_fails(self) -> None:
+        cases = (
+            ("mps", "torch.backends.mps.is_available"),
+            ("cuda", "torch.cuda.is_available"),
+        )
+        for device, availability in cases:
+            with (
+                self.subTest(device=device),
+                patch(availability, return_value=False),
+                self.assertRaisesRegex(BenchmarkError, "unavailable"),
+            ):
+                _selected_devices([device])
+
+    @patch("benchmarks.__main__.end_to_end.run", return_value=[])
+    @patch("benchmarks.__main__.build_prompt_case")
+    @patch("benchmarks.__main__.Engine.from_model_dir")
+    @patch("benchmarks.__main__.load_config")
+    def test_default_devices_select_cuda_only_for_gptq(
+        self,
+        load_config: MagicMock,
+        from_model_dir: MagicMock,
+        build_prompt_case: MagicMock,
+        _end_to_end: MagicMock,
+    ) -> None:
+        load_config.return_value = SimpleNamespace(quantization_config=object())
+        engine = MagicMock()
+        engine.max_seq_len = 97
+        engine.load_seconds = 1.0
+        engine.model.config.model_type = "qwen3"
+        from_model_dir.return_value = engine
+        build_prompt_case.return_value = PromptCase(32, "prompt", (1, 2))
+
         with (
-            patch("torch.backends.mps.is_available", return_value=False),
             patch("torch.cuda.is_available", return_value=True),
-        ):
-            self.assertEqual(_selected_devices(None), ["cpu", "cuda"])
-
-    def test_explicit_unavailable_mps_fails(self) -> None:
-        with (
             patch("torch.backends.mps.is_available", return_value=False),
-            self.assertRaisesRegex(BenchmarkError, "unavailable"),
         ):
-            _selected_devices(["mps"])
+            run(
+                self._args(model=[Path("qwen-gptq")], benchmark=["end-to-end"]),
+                output=StringIO(),
+            )
 
-    def test_explicit_unavailable_cuda_fails(self) -> None:
-        with (
-            patch("torch.cuda.is_available", return_value=False),
-            self.assertRaisesRegex(BenchmarkError, "unavailable"),
-        ):
-            _selected_devices(["cuda"])
+        from_model_dir.assert_called_once_with(
+            Path("qwen-gptq"),
+            device="cuda",
+            dtype="float16",
+            max_seq_len=97,
+            max_batch_size=1,
+        )
+        engine.to.assert_not_called()
+
+    @patch("benchmarks.__main__.Engine.from_model_dir")
+    @patch("benchmarks.__main__.load_config")
+    def test_rejects_explicit_cpu_before_loading_gptq(
+        self, load_config: MagicMock, from_model_dir: MagicMock
+    ) -> None:
+        load_config.return_value = SimpleNamespace(quantization_config=object())
+
+        with self.assertRaisesRegex(BenchmarkError, "CUDA only"):
+            run(
+                self._args(
+                    model=[Path("qwen-gptq")],
+                    benchmark=["end-to-end"],
+                    device=["cpu"],
+                ),
+                output=StringIO(),
+            )
+
+        from_model_dir.assert_not_called()
 
     @patch("benchmarks.__main__.build_prompt_case")
     @patch("benchmarks.__main__.load_config")

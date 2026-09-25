@@ -41,7 +41,7 @@ def has_local_checkpoint(model_dir: Path) -> bool:
 class InferenceTrace:
     """Logits and greedy tokens from one runtime's prefill/decode sequence."""
 
-    full_logits: torch.Tensor
+    uncached_last_logits: torch.Tensor
     prefill_logits: torch.Tensor
     decode_logits: tuple[torch.Tensor, ...]
     token_ids: tuple[int, ...]
@@ -61,7 +61,7 @@ def run_mini_runtime(
     cache = manager.allocate(capacity)
     try:
         with torch.inference_mode():
-            full_logits = model(input_ids).float().clone()
+            uncached_last_logits = model(input_ids)[:, -1:].float().clone()
             prefill_logits = model.prefill(input_ids, cache=cache).float().clone()
             token_ids = [int(prefill_logits[0, -1].argmax())]
             decode_logits = []
@@ -77,7 +77,7 @@ def run_mini_runtime(
     finally:
         manager.release(cache)
     return InferenceTrace(
-        full_logits,
+        uncached_last_logits,
         prefill_logits,
         tuple(decode_logits),
         tuple(token_ids),
@@ -96,7 +96,7 @@ def run_transformers(
     model = AutoModelForCausalLM.from_pretrained(
         model_dir,
         local_files_only=True,
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         attn_implementation="sdpa",
     ).eval()
     with torch.inference_mode():

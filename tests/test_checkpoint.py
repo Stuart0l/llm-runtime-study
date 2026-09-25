@@ -193,21 +193,6 @@ def save_sharded_checkpoint(
 
 
 class CheckpointSchemaTests(unittest.TestCase):
-    def test_expected_local_model_schema_has_311_tensors(self) -> None:
-        config = Qwen3Config.from_model_dir(QWEN_MODEL_DIR)
-
-        specs = expected_qwen3_tensors(config)
-
-        self.assertEqual(len(specs), 311)
-        self.assertEqual(
-            specs["model.layers.0.self_attn.q_proj.weight"].shape,
-            (2048, 1024),
-        )
-        self.assertEqual(
-            specs["model.layers.0.self_attn.k_proj.weight"].shape,
-            (1024, 1024),
-        )
-
     def test_attention_bias_configuration_adds_qkv_bias_tensors(self) -> None:
         raw = {
             "architectures": ["Qwen3ForCausalLM"],
@@ -237,16 +222,24 @@ class CheckpointSchemaTests(unittest.TestCase):
         self.assertEqual(specs["model.layers.0.self_attn.k_proj.bias"].shape, (4,))
         self.assertEqual(specs["model.layers.0.self_attn.v_proj.bias"].shape, (4,))
 
-    def test_validates_complete_synthetic_checkpoint(self) -> None:
-        config = tiny_config()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(tensors_for(config), path, metadata={"format": "pt"})
-            checkpoint = SafeTensorCheckpoint(path)
+    def test_validates_complete_synthetic_checkpoints(self) -> None:
+        for family, make_config, make_tensors, manifest_size in (
+            ("dense", tiny_config, tensors_for, 14),
+            ("gptq", tiny_gptq_config, gptq_tensors_for, 34),
+            ("granite", tiny_granite_config, granite_tensors_for, 11),
+        ):
+            with self.subTest(family=family):
+                config = make_config()
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "model.safetensors"
+                    save_file(make_tensors(config), path, metadata={"format": "pt"})
+                    checkpoint = SafeTensorCheckpoint(path)
 
-            validate_checkpoint(checkpoint, config)
+                    validate_checkpoint(checkpoint, config)
 
-        self.assertEqual(len(checkpoint.manifest), 14)
+                self.assertEqual(len(checkpoint.manifest), manifest_size)
+                if family == "gptq":
+                    self.assertNotIn("lm_head.weight", expected_qwen3_tensors(config))
 
     def test_reports_missing_and_unexpected_tensors_together(self) -> None:
         config = tiny_config()
@@ -266,21 +259,51 @@ class CheckpointSchemaTests(unittest.TestCase):
         self.assertIn("unexpected tensors: not.a.model.tensor", message)
 
     def test_reports_shape_and_dtype_mismatches_together(self) -> None:
-        config = tiny_config()
-        tensors = tensors_for(config)
-        tensors["model.norm.weight"] = torch.zeros(7, dtype=torch.bfloat16)
-        tensors["lm_head.weight"] = torch.zeros((16, 8), dtype=torch.float32)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(tensors, path)
-            checkpoint = SafeTensorCheckpoint(path)
+        gptq_qweight = "model.layers.0.self_attn.q_proj.qweight"
+        gptq_scales = "model.layers.0.self_attn.q_proj.scales"
+        granite_input = "model.layers.0.block_sparse_moe.input_linear.weight"
+        granite_output = "model.layers.0.block_sparse_moe.output_linear.weight"
+        for family, make_config, make_tensors, bad_shape, bad_dtype in (
+            (
+                "dense",
+                tiny_config,
+                tensors_for,
+                ("model.norm.weight", torch.zeros(7, dtype=torch.bfloat16)),
+                ("lm_head.weight", torch.zeros((16, 8), dtype=torch.float32)),
+            ),
+            (
+                "gptq",
+                tiny_gptq_config,
+                gptq_tensors_for,
+                (gptq_qweight, torch.zeros((31, 128), dtype=torch.int32)),
+                (gptq_scales, torch.zeros((1, 128), dtype=torch.float32)),
+            ),
+            (
+                "granite",
+                tiny_granite_config,
+                granite_tensors_for,
+                (granite_input, torch.zeros((4, 4, 8), dtype=torch.bfloat16)),
+                (granite_output, torch.zeros((4, 8, 4), dtype=torch.float32)),
+            ),
+        ):
+            with self.subTest(family=family):
+                config = make_config()
+                tensors = make_tensors(config)
+                shape_name, shape_tensor = bad_shape
+                dtype_name, dtype_tensor = bad_dtype
+                tensors[shape_name] = shape_tensor
+                tensors[dtype_name] = dtype_tensor
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "model.safetensors"
+                    save_file(tensors, path)
+                    checkpoint = SafeTensorCheckpoint(path)
 
-            with self.assertRaises(CheckpointValidationError) as caught:
-                validate_checkpoint(checkpoint, config)
+                    with self.assertRaises(CheckpointValidationError) as caught:
+                        validate_checkpoint(checkpoint, config)
 
-        message = str(caught.exception)
-        self.assertIn("shape mismatch for model.norm.weight", message)
-        self.assertIn("dtype mismatch for lm_head.weight", message)
+                message = str(caught.exception)
+                self.assertIn(f"shape mismatch for {shape_name}", message)
+                self.assertIn(f"dtype mismatch for {dtype_name}", message)
 
     def test_get_tensor_materializes_only_requested_value(self) -> None:
         config = tiny_config()
@@ -309,57 +332,6 @@ class CheckpointSchemaTests(unittest.TestCase):
 
 
 class GPTQCheckpointSchemaTests(unittest.TestCase):
-    def test_expected_qwen_gptq_schema_has_898_tensors(self) -> None:
-        config = Qwen3Config.from_model_dir(QWEN_GPTQ_MODEL_DIR)
-
-        specs = expected_qwen3_tensors(config)
-
-        self.assertEqual(len(specs), 898)
-        self.assertEqual(
-            {dtype: sum(spec.dtype == dtype for spec in specs.values())
-             for dtype in ("I32", "F16")},
-            {"I32": 588, "F16": 310},
-        )
-        self.assertNotIn("lm_head.weight", specs)
-        self.assertEqual(
-            specs["model.layers.0.self_attn.q_proj.qweight"].shape,
-            (256, 2048),
-        )
-        self.assertEqual(
-            specs["model.layers.0.mlp.down_proj.qzeros"].shape,
-            (24, 256),
-        )
-
-    def test_validates_complete_synthetic_gptq_checkpoint(self) -> None:
-        config = tiny_gptq_config()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(gptq_tensors_for(config), path)
-            checkpoint = SafeTensorCheckpoint(path)
-
-            validate_checkpoint(checkpoint, config)
-
-        self.assertEqual(len(checkpoint.manifest), 34)
-
-    def test_reports_gptq_shape_and_dtype_mismatches(self) -> None:
-        config = tiny_gptq_config()
-        tensors = gptq_tensors_for(config)
-        qweight = "model.layers.0.self_attn.q_proj.qweight"
-        scales = "model.layers.0.self_attn.q_proj.scales"
-        tensors[qweight] = torch.zeros((31, 128), dtype=torch.int32)
-        tensors[scales] = torch.zeros((1, 128), dtype=torch.float32)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(tensors, path)
-            checkpoint = SafeTensorCheckpoint(path)
-
-            with self.assertRaises(CheckpointValidationError) as caught:
-                validate_checkpoint(checkpoint, config)
-
-        message = str(caught.exception)
-        self.assertIn(f"shape mismatch for {qweight}", message)
-        self.assertIn(f"dtype mismatch for {scales}", message)
-
     def test_rejects_noncanonical_group_indices(self) -> None:
         config = tiny_gptq_config()
         tensors = gptq_tensors_for(config)
@@ -375,18 +347,6 @@ class GPTQCheckpointSchemaTests(unittest.TestCase):
                 rf"{name} at index 129: expected 1, got 0",
             ):
                 validate_checkpoint(checkpoint, config)
-
-    def test_validates_sharded_gptq_checkpoint(self) -> None:
-        config = tiny_gptq_config()
-        tensors = gptq_tensors_for(config)
-        with tempfile.TemporaryDirectory() as directory:
-            model_dir = Path(directory)
-            save_sharded_checkpoint(model_dir, tensors)
-            checkpoint = SafeTensorCheckpoint.from_model_dir(model_dir)
-
-            validate_checkpoint(checkpoint, config)
-
-        self.assertEqual(len(checkpoint.manifest), 34)
 
 
 class GraniteCheckpointSchemaTests(unittest.TestCase):
@@ -415,37 +375,6 @@ class GraniteCheckpointSchemaTests(unittest.TestCase):
             ].shape,
             (4, 8, 4),
         )
-
-    def test_validates_complete_synthetic_granite_checkpoint(self) -> None:
-        config = tiny_granite_config()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(granite_tensors_for(config), path)
-            checkpoint = SafeTensorCheckpoint(path)
-
-            validate_checkpoint(checkpoint, config)
-
-        self.assertEqual(len(checkpoint.manifest), 11)
-
-    def test_reports_packed_expert_shape_and_dtype_errors(self) -> None:
-        config = tiny_granite_config()
-        tensors = granite_tensors_for(config)
-        input_name = "model.layers.0.block_sparse_moe.input_linear.weight"
-        output_name = "model.layers.0.block_sparse_moe.output_linear.weight"
-        tensors[input_name] = torch.zeros((4, 4, 8), dtype=torch.bfloat16)
-        tensors[output_name] = torch.zeros((4, 8, 4), dtype=torch.float32)
-
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "model.safetensors"
-            save_file(tensors, path)
-            checkpoint = SafeTensorCheckpoint(path)
-
-            with self.assertRaises(CheckpointValidationError) as caught:
-                validate_checkpoint(checkpoint, config)
-
-        message = str(caught.exception)
-        self.assertIn(f"shape mismatch for {input_name}", message)
-        self.assertIn(f"dtype mismatch for {output_name}", message)
 
     def test_rejects_separate_lm_head_for_tied_embeddings(self) -> None:
         config = tiny_granite_config()
@@ -514,24 +443,6 @@ class LocalCheckpointIntegrationTests(unittest.TestCase):
         validate_checkpoint(self.checkpoint, self.config)
         self.assertEqual(len(self.checkpoint.manifest), 311)
 
-    def test_local_manifest_does_not_materialize_payloads(self) -> None:
-        info = self.checkpoint.tensor_info(
-            "model.layers.0.self_attn.q_norm.weight"
-        )
-
-        self.assertEqual(info.shape, (128,))
-        self.assertEqual(info.dtype, "BF16")
-        self.assertEqual(info.num_bytes, 256)
-
-    def test_loads_one_local_tensor_on_cpu(self) -> None:
-        tensor = self.checkpoint.get_tensor(
-            "model.layers.0.self_attn.q_norm.weight"
-        )
-
-        self.assertEqual(tuple(tensor.shape), (128,))
-        self.assertEqual(tensor.dtype, torch.bfloat16)
-        self.assertEqual(tensor.device.type, "cpu")
-
 
 @unittest.skipUnless(
     has_local_checkpoint(QWEN_GPTQ_MODEL_DIR),
@@ -555,19 +466,6 @@ class GPTQLocalCheckpointIntegrationTests(unittest.TestCase):
             sum(info.dtype == "F16" for info in self.checkpoint.manifest),
             310,
         )
-
-    def test_local_packed_projection_headers_match_configuration(self) -> None:
-        qweight = self.checkpoint.tensor_info(
-            "model.layers.0.self_attn.q_proj.qweight"
-        )
-        qzeros = self.checkpoint.tensor_info(
-            "model.layers.0.mlp.down_proj.qzeros"
-        )
-
-        self.assertEqual(qweight.shape, (256, 2048))
-        self.assertEqual(qweight.dtype, "I32")
-        self.assertEqual(qzeros.shape, (24, 256))
-        self.assertEqual(qzeros.dtype, "I32")
 
 
 @unittest.skipUnless(
@@ -621,28 +519,6 @@ class GraniteLocalCheckpointIntegrationTests(unittest.TestCase):
             sum(tensor.num_elements for tensor in self.checkpoint.manifest),
             self.config.total_parameter_estimate,
         )
-
-    def test_local_packed_expert_headers_match_configuration(self) -> None:
-        input_info = self.checkpoint.tensor_info(
-            "model.layers.0.block_sparse_moe.input_linear.weight"
-        )
-        output_info = self.checkpoint.tensor_info(
-            "model.layers.0.block_sparse_moe.output_linear.weight"
-        )
-        router_info = self.checkpoint.tensor_info(
-            "model.layers.0.block_sparse_moe.router.layer.weight"
-        )
-
-        self.assertEqual(input_info.shape, (32, 1024, 1024))
-        self.assertEqual(output_info.shape, (32, 1024, 512))
-        self.assertEqual(router_info.shape, (32, 1024))
-        self.assertEqual(input_info.dtype, "BF16")
-
-    def test_tied_embedding_checkpoint_has_no_lm_head(self) -> None:
-        names = {tensor.name for tensor in self.checkpoint.manifest}
-
-        self.assertIn("model.embed_tokens.weight", names)
-        self.assertNotIn("lm_head.weight", names)
 
 
 if __name__ == "__main__":

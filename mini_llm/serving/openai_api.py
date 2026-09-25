@@ -11,7 +11,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -237,12 +236,6 @@ class OpenAIRequestError(ValueError):
                 code=code,
             )
         )
-
-
-def validation_error_response(error: ValidationError) -> OpenAIErrorResponse:
-    """Convert the first schema failure to the standard OpenAI error envelope."""
-
-    return validation_errors_response(error.errors(include_url=False))
 
 
 def validation_errors_response(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 import unittest
 
@@ -10,7 +9,7 @@ import torch
 
 from tests.reference_support import has_local_checkpoint
 
-from mini_llm.cli import build_parser, main
+from mini_llm.cli import main
 from mini_llm.generation import GenerationEvent
 from mini_llm.tokenizer import ChatMessage
 
@@ -20,13 +19,6 @@ GRANITE_MODEL_DIR = Path(__file__).parents[1] / "models" / "granite-3.1-1b"
 
 
 class CLITests(unittest.TestCase):
-    def test_parser_accepts_cuda_device(self) -> None:
-        args = build_parser().parse_args(
-            ["--model", "model", "--prompt", "hello", "--device", "cuda"]
-        )
-
-        self.assertEqual(args.device, "cuda")
-
     @patch("mini_llm.cli.Engine.from_model_dir")
     def test_interactive_mode_loads_once_and_generates_for_each_prompt(
         self, from_model_dir: MagicMock
@@ -158,7 +150,7 @@ class CLITests(unittest.TestCase):
                     "--max-new-tokens",
                     "2",
                     "--device",
-                    "cpu",
+                    "cuda",
                     "--dtype",
                     "float32",
                     "--temperature",
@@ -188,7 +180,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("stop reason:         max_new_tokens", rendered)
         from_model_dir.assert_called_once_with(
             ANY,
-            device="cpu",
+            device="cuda",
             dtype="float32",
             max_seq_len=4096,
         )

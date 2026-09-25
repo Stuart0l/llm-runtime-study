@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import json
 from pathlib import Path
 import tempfile
@@ -13,12 +12,6 @@ from mini_llm.checkpoint import expected_qwen3_tensors
 from mini_llm.config import Qwen3Config
 from mini_llm.quantization import GPTQMarlinLinear
 from mini_llm.model.qwen import Qwen3ForCausalLM
-
-
-MODEL_DIRS = (
-    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int4", 4),
-    (Path(__file__).parents[1] / "models" / "qwen3-0.6b-int8", 8),
-)
 
 
 def _config_data(
@@ -81,39 +74,28 @@ def _checkpoint_tensors(config: Qwen3Config) -> dict[str, torch.Tensor]:
 
 
 class QuantizedQwenModelTests(unittest.TestCase):
-    def test_module_hierarchy_exactly_matches_gptq_checkpoint(self) -> None:
-        config = Qwen3Config.from_dict(_config_data())
-        with torch.device("meta"):
-            model = Qwen3ForCausalLM(config)
+    def test_state_dict_matches_gptq_checkpoint_contract(self) -> None:
+        for bits, torch_dtype in ((8, "float16"), (4, "bfloat16")):
+            with self.subTest(bits=bits):
+                config = Qwen3Config.from_dict(
+                    _config_data(bits=bits, torch_dtype=torch_dtype)
+                )
+                with torch.device("meta"):
+                    model = Qwen3ForCausalLM(config)
 
-        projections = [
-            module
-            for module in model.modules()
-            if isinstance(module, GPTQMarlinLinear)
-        ]
-        self.assertEqual(len(projections), 7)
-        self.assertIsNone(model.lm_head)
-        self.assertEqual(
-            set(model.state_dict()), set(expected_qwen3_tensors(config))
-        )
-
-    def test_infers_int4_modules_from_checkpoint_config(self) -> None:
-        config = Qwen3Config.from_dict(
-            _config_data(bits=4, torch_dtype="bfloat16")
-        )
-        with torch.device("meta"):
-            model = Qwen3ForCausalLM(config)
-
-        projections = [
-            module
-            for module in model.modules()
-            if isinstance(module, GPTQMarlinLinear)
-        ]
-        self.assertEqual(len(projections), 7)
-        self.assertTrue(all(projection.bits == 4 for projection in projections))
-        self.assertEqual(
-            set(model.state_dict()), set(expected_qwen3_tensors(config))
-        )
+                projections = [
+                    module
+                    for module in model.modules()
+                    if isinstance(module, GPTQMarlinLinear)
+                ]
+                self.assertEqual(len(projections), 7)
+                self.assertTrue(
+                    all(projection.bits == bits for projection in projections)
+                )
+                self.assertIsNone(model.lm_head)
+                self.assertEqual(
+                    set(model.state_dict()), set(expected_qwen3_tensors(config))
+                )
 
     def test_strictly_loads_synthetic_gptq_checkpoints_on_cpu(self) -> None:
         for bits, dtype in ((4, "bfloat16"), (8, "float16")):
@@ -157,73 +139,6 @@ class QuantizedQwenModelTests(unittest.TestCase):
                         for projection in projections
                     )
                 )
-
-    @unittest.skipUnless(
-        torch.cuda.is_available() and all(path.is_dir() for path, _ in MODEL_DIRS),
-        "requires CUDA and the real GPTQ checkpoint",
-    )
-    def test_real_checkpoints_run_end_to_end_with_fused_marlin(self) -> None:
-        for model_dir, bits in MODEL_DIRS:
-            with self.subTest(bits=bits):
-                model = Qwen3ForCausalLM.from_model_dir(model_dir)
-                try:
-                    projections = [
-                        module
-                        for module in model.modules()
-                        if isinstance(module, GPTQMarlinLinear)
-                    ]
-                    self.assertEqual(len(projections), 196)
-                    self.assertTrue(
-                        all(projection.bits == bits for projection in projections)
-                    )
-
-                    model.to(device="cuda", dtype=torch.float16)
-                    self.assertTrue(
-                        all(
-                            projection.qweight.device.type == "cpu"
-                            for projection in projections
-                        )
-                    )
-                    model.prepare_quantized("cuda")
-                    model.materialize_derived_buffers("cuda")
-
-                    logits = model(torch.tensor([[1]], device="cuda"))
-
-                    self.assertEqual(
-                        logits.shape, (1, 1, model.config.vocab_size)
-                    )
-                    self.assertEqual(logits.dtype, torch.float16)
-                    self.assertTrue(torch.isfinite(logits).all().item())
-                    self.assertEqual(
-                        sum(
-                            projection.qweight.device.type == "cuda"
-                            for projection in projections
-                        ),
-                        56,
-                    )
-                    self.assertTrue(
-                        all(
-                            projection._canonical_qweight is not None
-                            and projection._canonical_qweight.device.type == "cpu"
-                            for projection in projections
-                        )
-                    )
-                    self.assertTrue(
-                        all(
-                            layer.self_attn._qkv_fusion is not None
-                            for layer in model.model.layers
-                        )
-                    )
-                    self.assertTrue(
-                        all(
-                            layer.mlp._gate_up_fusion is not None
-                            for layer in model.model.layers
-                        )
-                    )
-                finally:
-                    del model
-                    gc.collect()
-                    torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

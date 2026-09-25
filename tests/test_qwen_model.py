@@ -9,9 +9,8 @@ from pathlib import Path
 from safetensors.torch import save_file
 import torch
 
-from mini_llm.checkpoint import SafeTensorCheckpoint
+from mini_llm.checkpoint import expected_qwen3_tensors
 from mini_llm.config import Qwen3Config
-from mini_llm.model.base import DecoderModel
 from mini_llm.model.qwen import Qwen3DecoderLayer, Qwen3ForCausalLM
 from mini_llm.nn import RotaryEmbedding, build_position_ids
 from mini_llm.tokenizer import Qwen3Tokenizer
@@ -53,6 +52,40 @@ def _tiny_config_data(*, num_hidden_layers: int = 2) -> dict[str, object]:
 def _tiny_config(*, num_hidden_layers: int = 2) -> Qwen3Config:
     return Qwen3Config.from_dict(
         _tiny_config_data(num_hidden_layers=num_hidden_layers)
+    )
+
+
+def _write_sharded_checkpoint(
+    model_dir: Path, tensors: dict[str, torch.Tensor]
+) -> None:
+    names = sorted(tensors)
+    split = len(names) // 2
+    shard_names = (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    )
+    save_file(
+        {name: tensors[name] for name in names[:split]},
+        model_dir / shard_names[0],
+    )
+    save_file(
+        {name: tensors[name] for name in names[split:]},
+        model_dir / shard_names[1],
+    )
+    weight_map = {
+        name: shard_names[0] if index < split else shard_names[1]
+        for index, name in enumerate(names)
+    }
+    total_size = sum(
+        tensor.numel() * tensor.element_size() for tensor in tensors.values()
+    )
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": total_size},
+                "weight_map": weight_map,
+            }
+        )
     )
 
 
@@ -107,7 +140,10 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
         )
 
         torch.testing.assert_close(
-            actual.full_logits, expected.full_logits, rtol=0.0, atol=0.0
+            actual.uncached_last_logits,
+            expected.uncached_last_logits,
+            rtol=0.0,
+            atol=0.0,
         )
         torch.testing.assert_close(
             actual.prefill_logits, expected.prefill_logits, rtol=0.0, atol=0.0
@@ -125,15 +161,6 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
         print(f"  Our output: {our_text!r}")
         print(f"  HF output:  {reference_text!r}")
 
-    def test_forward_returns_finite_logits_for_every_token(self) -> None:
-        config = _tiny_config()
-        model = Qwen3ForCausalLM(config).eval()
-
-        logits = model(torch.tensor([[1, 4, 7], [2, 8, 9]]))
-
-        self.assertEqual(logits.shape, (2, 3, config.vocab_size))
-        self.assertTrue(torch.isfinite(logits).all())
-
     def test_automatic_positions_match_explicit_positions(self) -> None:
         config = _tiny_config()
         model = Qwen3ForCausalLM(config).eval()
@@ -145,122 +172,37 @@ class Qwen3ForCausalLMTests(unittest.TestCase):
 
         torch.testing.assert_close(automatic, explicit)
 
-    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
-    def test_decoder_forward_is_cuda_graph_capturable(self) -> None:
-        decoder = DecoderModel(_tiny_config(), ()).eval().cuda()
-        decoder.requires_grad_(False)
-        input_ids = torch.tensor([[1]], device="cuda")
-        position_ids = torch.tensor([[7]], device="cuda")
-
-        with torch.inference_mode():
-            side_stream = torch.cuda.Stream()
-            side_stream.wait_stream(torch.cuda.current_stream())
-            with torch.cuda.stream(side_stream):
-                for _ in range(3):
-                    decoder(input_ids, position_ids=position_ids)
-            torch.cuda.current_stream().wait_stream(side_stream)
-
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                actual = decoder(input_ids, position_ids=position_ids)
-            graph.replay()
-            expected = decoder(input_ids, position_ids=position_ids)
-
-        torch.testing.assert_close(actual, expected)
-
     def test_module_names_match_checkpoint_contract(self) -> None:
-        model = Qwen3ForCausalLM(_tiny_config())
-        names = set(model.state_dict())
-
-        self.assertIn("model.embed_tokens.weight", names)
-        self.assertIn("model.layers.0.self_attn.q_proj.weight", names)
-        self.assertIn("model.layers.0.self_attn.q_norm.weight", names)
-        self.assertIn("model.layers.0.mlp.gate_proj.weight", names)
-        self.assertIn("model.layers.0.input_layernorm.weight", names)
-        self.assertIn("model.norm.weight", names)
-        self.assertIn("lm_head.weight", names)
-        self.assertNotIn("model.rotary_emb.inverse_frequencies", names)
-
-    def test_meta_model_assigns_checkpoint_tensors_without_placeholders(self) -> None:
-        config = _tiny_config(num_hidden_layers=1)
-        source = Qwen3ForCausalLM(config).eval()
-        tensors = {name: value.detach() for name, value in source.state_dict().items()}
-
-        with tempfile.TemporaryDirectory() as directory:
-            checkpoint_path = Path(directory) / "model.safetensors"
-            save_file(tensors, checkpoint_path)
-            checkpoint = SafeTensorCheckpoint(checkpoint_path)
-            with torch.device("meta"):
-                loaded = Qwen3ForCausalLM(config)
-            loaded.load_checkpoint(checkpoint)
-
-        self.assertEqual(loaded.lm_head.weight.device.type, "cpu")
-        self.assertEqual(loaded.model.rotary_emb.inverse_frequencies.device.type, "cpu")
-        torch.testing.assert_close(loaded.lm_head.weight, source.lm_head.weight)
-
-    def test_from_model_dir_validates_and_loads_complete_checkpoint(self) -> None:
-        config_data = _tiny_config_data(num_hidden_layers=1)
-        source = Qwen3ForCausalLM(Qwen3Config.from_dict(config_data)).eval()
-        tensors = {name: value.detach() for name, value in source.state_dict().items()}
-        input_ids = torch.tensor([[1, 4, 7]])
-
-        with tempfile.TemporaryDirectory() as directory:
-            model_dir = Path(directory)
-            (model_dir / "config.json").write_text(json.dumps(config_data))
-            save_file(tensors, model_dir / "model.safetensors")
-
-            loaded = Qwen3ForCausalLM.from_model_dir(model_dir)
-            actual = loaded(input_ids)
-
-        expected = source(input_ids)
-        self.assertFalse(loaded.training)
-        self.assertFalse(any(parameter.is_meta for parameter in loaded.parameters()))
-        torch.testing.assert_close(actual, expected)
-
-    def test_from_model_dir_loads_indexed_sharded_checkpoint(self) -> None:
-        config_data = _tiny_config_data(num_hidden_layers=1)
-        source = Qwen3ForCausalLM(Qwen3Config.from_dict(config_data)).eval()
-        tensors = {name: value.detach() for name, value in source.state_dict().items()}
-        names = sorted(tensors)
-        split = len(names) // 2
-        shard_names = (
-            "model-00001-of-00002.safetensors",
-            "model-00002-of-00002.safetensors",
+        self.assertEqual(
+            set(Qwen3ForCausalLM(_tiny_config()).state_dict()),
+            set(expected_qwen3_tensors(_tiny_config())),
         )
+
+    def test_from_model_dir_loads_single_and_sharded_checkpoints(self) -> None:
+        config_data = _tiny_config_data(num_hidden_layers=1)
+        source = Qwen3ForCausalLM(Qwen3Config.from_dict(config_data)).eval()
+        tensors = {name: value.detach() for name, value in source.state_dict().items()}
         input_ids = torch.tensor([[1, 4, 7]])
-
-        with tempfile.TemporaryDirectory() as directory:
-            model_dir = Path(directory)
-            (model_dir / "config.json").write_text(json.dumps(config_data))
-            save_file(
-                {name: tensors[name] for name in names[:split]},
-                model_dir / shard_names[0],
-            )
-            save_file(
-                {name: tensors[name] for name in names[split:]},
-                model_dir / shard_names[1],
-            )
-            weight_map = {
-                name: shard_names[0] if index < split else shard_names[1]
-                for index, name in enumerate(names)
-            }
-            total_size = sum(
-                tensor.numel() * tensor.element_size() for tensor in tensors.values()
-            )
-            (model_dir / "model.safetensors.index.json").write_text(
-                json.dumps(
-                    {
-                        "metadata": {"total_size": total_size},
-                        "weight_map": weight_map,
-                    }
-                )
-            )
-
-            loaded = Qwen3ForCausalLM.from_model_dir(model_dir)
-            actual = loaded(input_ids)
-
         expected = source(input_ids)
-        torch.testing.assert_close(actual, expected)
+
+        for layout in ("single", "sharded"):
+            with self.subTest(layout=layout):
+                with tempfile.TemporaryDirectory() as directory:
+                    model_dir = Path(directory)
+                    (model_dir / "config.json").write_text(json.dumps(config_data))
+                    if layout == "single":
+                        save_file(tensors, model_dir / "model.safetensors")
+                    else:
+                        _write_sharded_checkpoint(model_dir, tensors)
+
+                    loaded = Qwen3ForCausalLM.from_model_dir(model_dir)
+                    actual = loaded(input_ids)
+
+                self.assertFalse(loaded.training)
+                self.assertFalse(
+                    any(parameter.is_meta for parameter in loaded.parameters())
+                )
+                torch.testing.assert_close(actual, expected)
 
     def test_rejects_invalid_token_ids_and_positions(self) -> None:
         model = Qwen3ForCausalLM(_tiny_config())

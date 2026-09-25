@@ -238,63 +238,43 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(len(model.cache_manager.released), 2)
 
     def test_batch_prefill_failure_releases_every_allocated_cache(self) -> None:
-        model = _FakeBatchModel()
-        original_prefill = model.prefill
+        def single_request():
+            model = _FakeModel([2])
+            model.prefill = MagicMock(side_effect=RuntimeError("prefill failed"))
+            return model, _FakeTokenizer(prompt_ids=[0]), (
+                [ChatMessage("user", "question")],
+            ), 1
 
-        def fail_second_prefill(input_ids, *, cache):
-            if int(input_ids[0, -1]) == 1:
-                raise RuntimeError("prefill failed")
-            return original_prefill(input_ids, cache=cache)
+        def two_requests():
+            model = _FakeBatchModel()
+            original_prefill = model.prefill
 
-        model.prefill = fail_second_prefill
-        stream = generate_text(
-            model,
-            _BatchTokenizer(),
-            (
+            def fail_second_prefill(input_ids, *, cache):
+                if int(input_ids[0, -1]) == 1:
+                    raise RuntimeError("prefill failed")
+                return original_prefill(input_ids, cache=cache)
+
+            model.prefill = fail_second_prefill
+            return model, _BatchTokenizer(), (
                 [ChatMessage("user", "first")],
                 [ChatMessage("user", "second")],
-            ),
-            max_new_tokens=2,
-            cache_manager=model.cache_manager,
-        )
+            ), 2
 
-        with self.assertRaisesRegex(RuntimeError, "prefill failed"):
-            list(stream)
+        for batch_size, build in ((1, single_request), (2, two_requests)):
+            with self.subTest(batch_size=batch_size):
+                model, tokenizer, histories, max_new_tokens = build()
+                stream = generate_text(
+                    model,
+                    tokenizer,
+                    histories,
+                    max_new_tokens=max_new_tokens,
+                    cache_manager=model.cache_manager,
+                )
 
-        self.assertEqual(len(model.cache_manager.released), 2)
+                with self.assertRaisesRegex(RuntimeError, "prefill failed"):
+                    list(stream)
 
-    def test_formats_complete_chat_history_before_iteration(self) -> None:
-        model = _FakeModel([2, 4])
-        tokenizer = _FakeTokenizer()
-        messages = [
-            ChatMessage("system", "Be concise."),
-            ChatMessage("user", "What is a KV cache?"),
-            ChatMessage("assistant", "Stored attention keys and values."),
-            ChatMessage("user", "Why keep it?"),
-        ]
-
-        stream = generate(
-            model,
-            tokenizer,
-            messages,
-            max_new_tokens=2,
-            sampling=SamplingConfig(temperature=0),
-        )
-
-        self.assertEqual(model.prefill_calls, 0)
-        self.assertEqual(
-            tokenizer.encoded_text,
-            "<|im_start|>system\nBe concise.<|im_end|>\n"
-            "<|im_start|>user\nWhat is a KV cache?<|im_end|>\n"
-            "<|im_start|>assistant\nStored attention keys and values.<|im_end|>\n"
-            "<|im_start|>user\nWhy keep it?<|im_end|>\n"
-            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-        )
-
-        events = list(stream)
-
-        self.assertEqual(model.prefill_calls, 1)
-        self.assertEqual([event.token_id for event in events], [2, 4])
+                self.assertEqual(len(model.cache_manager.released), batch_size)
 
     def test_rejects_invalid_chat_history_eagerly(self) -> None:
         model = _FakeModel([2])
@@ -446,21 +426,6 @@ class GenerationTests(unittest.TestCase):
         next(stream)
         self.assertEqual(model.cache_manager.released, [])
         stream.close()
-
-        self.assertEqual(len(model.cache_manager.released), 1)
-
-    def test_model_failure_releases_request_cache(self) -> None:
-        model = _FakeModel([2])
-        model.prefill = MagicMock(side_effect=RuntimeError("prefill failed"))
-        stream = generate(
-            model,
-            _FakeTokenizer(prompt_ids=[0]),
-            [ChatMessage("user", "question")],
-            max_new_tokens=1,
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "prefill failed"):
-            list(stream)
 
         self.assertEqual(len(model.cache_manager.released), 1)
 

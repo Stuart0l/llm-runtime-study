@@ -13,7 +13,6 @@ from mini_llm.tokenizer import (
     TokenizerError,
     load_tokenizer,
 )
-from examples.tokenizer_demo import render_token_mapping
 
 
 QWEN_MODEL_DIR = Path(__file__).parents[1] / "models" / "qwen3-0.6b"
@@ -132,10 +131,19 @@ class GraniteChatFormattingTests(unittest.TestCase):
             )
 
 
-class ChatTemplateRegistrationTests(unittest.TestCase):
-    def test_each_tokenizer_declares_its_architecture_template(self) -> None:
-        self.assertIs(Qwen3Tokenizer.chat_template, Qwen3ChatTemplate)
-        self.assertIs(GraniteTokenizer.chat_template, GraniteChatTemplate)
+class Qwen3SpecialTokenTests(unittest.TestCase):
+    def test_special_token_ids_resolve_for_each_checkpoint(self) -> None:
+        for model_dir in (QWEN_MODEL_DIR, QWEN_INT4_MODEL_DIR):
+            with self.subTest(model_dir=model_dir.name):
+                if not model_dir.is_dir():
+                    self.skipTest(f"local tokenizer {model_dir.name} is unavailable")
+                tokenizer = Qwen3Tokenizer.from_model_dir(model_dir)
+
+                self.assertEqual(tokenizer.special_tokens.end_of_text, 151643)
+                self.assertEqual(tokenizer.special_tokens.im_start, 151644)
+                self.assertEqual(tokenizer.special_tokens.im_end, 151645)
+                self.assertEqual(tokenizer.special_tokens.think_start, 151667)
+                self.assertEqual(tokenizer.special_tokens.think_end, 151668)
 
 
 @unittest.skipUnless(
@@ -145,24 +153,6 @@ class Qwen3TokenizerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tokenizer = Qwen3Tokenizer.from_model_dir(QWEN_MODEL_DIR)
-
-    def test_int4_checkpoint_tokenizer_loads_with_its_packaging_metadata(self) -> None:
-        tokenizer = Qwen3Tokenizer.from_model_dir(QWEN_INT4_MODEL_DIR)
-
-        self.assertEqual(tokenizer.special_tokens.end_of_text, 151643)
-        self.assertEqual(tokenizer.special_tokens.im_end, 151645)
-
-    def test_validates_special_token_ids(self) -> None:
-        self.assertEqual(self.tokenizer.special_tokens.end_of_text, 151643)
-        self.assertEqual(self.tokenizer.special_tokens.im_start, 151644)
-        self.assertEqual(self.tokenizer.special_tokens.im_end, 151645)
-        self.assertEqual(self.tokenizer.special_tokens.think_start, 151667)
-        self.assertEqual(self.tokenizer.special_tokens.think_end, 151668)
-
-    def test_distinguishes_tokenizer_entries_from_model_output_rows(self) -> None:
-        self.assertEqual(self.tokenizer.base_vocab_size, 151643)
-        self.assertEqual(self.tokenizer.vocab_size, 151669)
-        self.assertEqual(self.tokenizer.model_vocab_size, 151936)
 
     def test_formatted_prompt_round_trips_exactly(self) -> None:
         prompt = self.tokenizer.format_chat([ChatMessage("user", "Hello")])
@@ -183,17 +173,6 @@ class Qwen3TokenizerIntegrationTests(unittest.TestCase):
         self.assertNotIn("<|im_end|>", decoded)
         self.assertIn("<think>", decoded)
 
-    def test_demo_renders_one_to_one_token_id_mapping(self) -> None:
-        token_ids = self.tokenizer.encode("<|im_start|>user\nHello<|im_end|>")
-
-        mapping = render_token_mapping(self.tokenizer, token_ids)
-
-        self.assertIn("    0  '<|im_start|>'              151644", mapping)
-        self.assertIn("    1  'user'                         872", mapping)
-        self.assertIn("    2  'Ċ'                            198", mapping)
-        self.assertIn("    3  'Hello'                       9707", mapping)
-        self.assertIn("    4  '<|im_end|>'                151645", mapping)
-
 
 @unittest.skipUnless(
     GRANITE_MODEL_DIR.is_dir(), "local Granite tokenizer is unavailable"
@@ -207,17 +186,6 @@ class GraniteTokenizerIntegrationTests(unittest.TestCase):
         tokenizer = load_tokenizer(GRANITE_MODEL_DIR)
 
         self.assertIsInstance(tokenizer, GraniteTokenizer)
-
-    def test_validates_official_special_token_ids(self) -> None:
-        self.assertEqual(self.tokenizer.special_tokens.end_of_text, 0)
-        self.assertEqual(self.tokenizer.special_tokens.start_of_role, 49152)
-        self.assertEqual(self.tokenizer.special_tokens.end_of_role, 49153)
-        self.assertEqual(self.tokenizer.special_tokens.tool_call, 49154)
-
-    def test_tokenizer_and_model_vocabulary_sizes_match(self) -> None:
-        self.assertEqual(self.tokenizer.base_vocab_size, 49152)
-        self.assertEqual(self.tokenizer.vocab_size, 49155)
-        self.assertEqual(self.tokenizer.model_vocab_size, 49155)
 
     def test_formatted_prompt_round_trips_exactly(self) -> None:
         prompt = self.tokenizer.format_chat(

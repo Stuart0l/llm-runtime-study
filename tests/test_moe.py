@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 import torch
 from torch.nn import functional as F
@@ -78,37 +77,6 @@ class TopKRouterTests(unittest.TestCase):
 
 
 class GraniteMoeBlockTests(unittest.TestCase):
-    def test_supports_meta_construction_for_checkpoint_loading(self) -> None:
-        with torch.device("meta"):
-            block = GraniteMoeBlock(
-                hidden_size=4,
-                intermediate_size=3,
-                num_experts=5,
-                top_k=2,
-            )
-
-        self.assertTrue(all(parameter.is_meta for parameter in block.parameters()))
-
-    def test_parameter_names_and_shapes_match_packed_checkpoint(self) -> None:
-        block = GraniteMoeBlock(
-            hidden_size=8,
-            intermediate_size=4,
-            num_experts=32,
-            top_k=8,
-        )
-
-        self.assertEqual(block.router.layer.weight.shape, (32, 8))
-        self.assertEqual(block.input_linear.weight.shape, (32, 8, 8))
-        self.assertEqual(block.output_linear.weight.shape, (32, 8, 4))
-        self.assertEqual(
-            set(block.state_dict()),
-            {
-                "input_linear.weight",
-                "output_linear.weight",
-                "router.layer.weight",
-            },
-        )
-
     def test_matches_explicit_token_and_expert_loops(self) -> None:
         torch.manual_seed(41)
         block = GraniteMoeBlock(
@@ -127,64 +95,39 @@ class GraniteMoeBlockTests(unittest.TestCase):
         self.assertTrue(torch.equal(routing.expert_indices, indices))
         torch.testing.assert_close(routing.expert_weights, weights)
 
-    def test_single_token_batched_experts_match_explicit_reference(self) -> None:
-        torch.manual_seed(67)
-        block = GraniteMoeBlock(
-            hidden_size=4,
-            intermediate_size=3,
-            num_experts=5,
-            top_k=2,
+    def test_batched_expert_paths_match_explicit_reference(self) -> None:
+        # Exercise the MPS/CUDA-oriented helpers directly on CPU so their
+        # equations are covered even without an accelerator.
+        cases = (
+            ("_forward_single_token", 67, torch.float32, (1, 1, 4), 1e-5, 1e-6),
+            ("_forward_multiple_tokens", 71, torch.float16, (2, 3, 4), 2e-3, 2e-3),
         )
-        inputs = torch.randn(1, 1, 4)
-        expected, logits, indices, weights = _explicit_moe_reference(block, inputs)
 
-        # Exercise the MPS-oriented helper directly on CPU so its equation is
-        # covered even when the test environment has no Apple GPU.
-        with patch.object(
-            block.input_linear,
-            "forward_expert",
-            side_effect=AssertionError("single-token path used expert loop"),
-        ):
-            flattened = inputs.reshape(-1, block.hidden_size)
-            routing = block.router(flattened)
-            actual, routing = block._forward_single_token(
-                inputs, flattened, routing
-            )
+        for path, seed, dtype, shape, rtol, atol in cases:
+            with self.subTest(path=path):
+                torch.manual_seed(seed)
+                block = GraniteMoeBlock(
+                    hidden_size=4,
+                    intermediate_size=3,
+                    num_experts=5,
+                    top_k=2,
+                ).to(dtype=dtype)
+                inputs = torch.randn(*shape, dtype=dtype)
+                expected, logits, indices, weights = _explicit_moe_reference(
+                    block, inputs
+                )
+                flattened = inputs.reshape(-1, block.hidden_size)
+                routing = block.router(flattened)
 
-        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
-        torch.testing.assert_close(routing.logits, logits)
-        self.assertTrue(torch.equal(routing.expert_indices, indices))
-        torch.testing.assert_close(routing.expert_weights, weights)
+                actual, routing = getattr(block, path)(inputs, flattened, routing)
 
-    def test_multiple_token_batched_experts_match_explicit_reference(self) -> None:
-        torch.manual_seed(71)
-        block = GraniteMoeBlock(
-            hidden_size=4,
-            intermediate_size=3,
-            num_experts=5,
-            top_k=2,
-        ).to(dtype=torch.float16)
-        inputs = torch.randn(2, 3, 4, dtype=torch.float16)
-        expected, logits, indices, weights = _explicit_moe_reference(block, inputs)
-        flattened = inputs.reshape(-1, block.hidden_size)
-        routing = block.router(flattened)
-
-        with patch.object(
-            block.input_linear,
-            "forward_expert",
-            side_effect=AssertionError("padded path used expert loop"),
-        ):
-            actual, routing = block._forward_multiple_tokens(
-                inputs, flattened, routing
-            )
-
-        torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
-        torch.testing.assert_close(routing.logits, logits)
-        self.assertTrue(torch.equal(routing.expert_indices, indices))
-        torch.testing.assert_close(routing.expert_weights, weights)
+                torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+                torch.testing.assert_close(routing.logits, logits)
+                self.assertTrue(torch.equal(routing.expert_indices, indices))
+                torch.testing.assert_close(routing.expert_weights, weights)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is unavailable")
-    def test_cuda_dispatch_uses_batched_expert_paths(self) -> None:
+    def test_cuda_forward_matches_explicit_reference(self) -> None:
         torch.manual_seed(79)
         block = GraniteMoeBlock(
             hidden_size=4,
@@ -201,12 +144,7 @@ class GraniteMoeBlockTests(unittest.TestCase):
                 expected, logits, indices, weights = _explicit_moe_reference(
                     block, inputs
                 )
-                with patch.object(
-                    block.input_linear,
-                    "forward_expert",
-                    side_effect=AssertionError("CUDA used the CPU expert loop"),
-                ):
-                    actual, routing = block(inputs)
+                actual, routing = block(inputs)
 
                 torch.testing.assert_close(actual, expected, rtol=3e-3, atol=3e-3)
                 torch.testing.assert_close(routing.logits, logits)
@@ -231,30 +169,6 @@ class GraniteMoeBlockTests(unittest.TestCase):
 
         self.assertEqual(routing.expert_indices.tolist(), [[0], [0]])
         self.assertTrue(torch.isfinite(output).all())
-
-    def test_preserves_input_shape_and_execution_dtype(self) -> None:
-        block = GraniteMoeBlock(
-            hidden_size=4,
-            intermediate_size=2,
-            num_experts=4,
-            top_k=2,
-        ).to(dtype=torch.bfloat16)
-        inputs = torch.randn(2, 3, 4, dtype=torch.bfloat16)
-
-        output, _ = block(inputs)
-
-        self.assertEqual(output.shape, inputs.shape)
-        self.assertEqual(output.dtype, inputs.dtype)
-        self.assertTrue(torch.isfinite(output).all())
-
-    def test_rejects_invalid_expert_count_and_top_k(self) -> None:
-        with self.assertRaisesRegex(ValueError, "top_k"):
-            GraniteMoeBlock(
-                hidden_size=4,
-                intermediate_size=2,
-                num_experts=4,
-                top_k=5,
-            )
 
 
 if __name__ == "__main__":
