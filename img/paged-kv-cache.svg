@@ -1,0 +1,975 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1210" viewBox="0 0 1600 1210">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+<marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1f5fbf"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#127a5e"/></marker>
+<marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b2d8e"/></marker>
+<marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d9661f"/></marker>
+</defs>
+<rect x="0" y="0" width="1600" height="1210" rx="0" fill="white" stroke="none" stroke-width="2"/>
+<rect x="20" y="20" width="405" height="250" rx="8" fill="#f6f8fd" stroke="#1b3f8b" stroke-width="2.5"/>
+<text x="38" y="56" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="24" fill="#1b3f8b" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">PagedSequenceKVCache</text>
+<text x="38" y="78" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#555" font-weight="normal" text-anchor="start" font-style="italic" xml:space="preserve">one request, returned by manager.allocate(32)</text>
+<text x="38" y="114" font-size="19" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#222" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">capacity = </tspan><tspan fill="#222" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">32</tspan></text>
+<text x="38" y="148" font-size="19" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#222" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">length = </tspan><tspan fill="#222" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">21</tspan><tspan fill="#555" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">   SequenceLength (host int)</tspan></text>
+<text x="38" y="182" font-size="19" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#222" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">block_table = [</tspan><tspan fill="#1f5fbf" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">4</tspan><tspan fill="#222" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">, </tspan><tspan fill="#127a5e" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">1</tspan><tspan fill="#222" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">]</tspan><tspan fill="#555" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">   int32, on device</tspan></text>
+<text x="38" y="216" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="15.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">layers[i] = PagedLayerKVCache(self, i)</text>
+<text x="38" y="244" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">extend · reset · rollback · batch_layers</text>
+<rect x="20" y="292" width="250" height="110" rx="8" fill="white" stroke="#1f5fbf" stroke-width="2"/>
+<rect x="20" y="292" width="250" height="36" rx="8" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="2"/>
+<text x="145" y="317" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Logical block 0</text>
+<text x="145" y="350" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">tokens 0–15</text>
+<rect x="32" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="45.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="61" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="74.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="90" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="103.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<text x="132.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">…</text>
+<rect x="148" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="161.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">13</text>
+<rect x="177" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="190.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">14</text>
+<rect x="206" y="364" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="219.0" y="382" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">15</text>
+<line x1="272" y1="347" x2="332" y2="347" stroke="#1f5fbf" stroke-width="2" marker-end="url(#ab)"/>
+<text x="302" y="337" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#1f5fbf" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">maps to</text>
+<rect x="336" y="312" width="90" height="70" rx="8" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="2"/>
+<text x="381" y="342" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#1f5fbf" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">Physical</text>
+<text x="381" y="364" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#1f5fbf" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">block 4</text>
+<rect x="20" y="420" width="250" height="110" rx="8" fill="white" stroke="#127a5e" stroke-width="2"/>
+<rect x="20" y="420" width="250" height="36" rx="8" fill="#e3f4ee" stroke="#127a5e" stroke-width="2"/>
+<text x="145" y="445" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Logical block 1</text>
+<text x="145" y="478" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">tokens 16–20 (21–31 reserved)</text>
+<rect x="32" y="492" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="45.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">16</text>
+<rect x="61" y="492" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="74.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">17</text>
+<rect x="90" y="492" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="103.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">18</text>
+<rect x="119" y="492" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="132.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">19</text>
+<rect x="148" y="492" width="26" height="26" rx="3" fill="white" stroke="#444" stroke-width="1"/>
+<text x="161.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">20</text>
+<rect x="177" y="492" width="26" height="26" rx="3" fill="#f0f0f0" stroke="#444" stroke-width="1"/>
+<text x="190.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">·</text>
+<text x="219.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">…</text>
+<rect x="235" y="492" width="26" height="26" rx="3" fill="#f0f0f0" stroke="#444" stroke-width="1"/>
+<text x="248.0" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#222" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">·</text>
+<line x1="272" y1="475" x2="332" y2="475" stroke="#127a5e" stroke-width="2" marker-end="url(#ag)"/>
+<text x="302" y="465" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#127a5e" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">maps to</text>
+<rect x="336" y="440" width="90" height="70" rx="8" fill="#e3f4ee" stroke="#127a5e" stroke-width="2"/>
+<text x="381" y="470" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#127a5e" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">Physical</text>
+<text x="381" y="492" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#127a5e" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">block 1</text>
+<rect x="20" y="548" width="405" height="76" rx="8" fill="#fafafa" stroke="#888" stroke-width="1.5" stroke-dasharray="5,4"/>
+<text x="36" y="576" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">token position p lives at</text>
+<text x="36" y="604" font-size="16" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#222" font-weight="bold" font-family="DejaVu Sans Mono, Liberation Mono, monospace">block_table[p // 16]</tspan><tspan fill="#333" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">, slot </tspan><tspan fill="#222" font-weight="bold" font-family="DejaVu Sans Mono, Liberation Mono, monospace">p % 16</tspan></text>
+<rect x="450" y="20" width="725" height="640" rx="8" fill="white" stroke="#1b3f8b" stroke-width="2.5"/>
+<text x="812.5" y="56" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="26" fill="#1b3f8b" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">PagedKVCacheManager</text>
+<text x="812.5" y="80" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="14" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">allocate(capacity) · release(cache) · last_allocation: CacheAllocation</text>
+<rect x="468" y="96" width="689" height="62" rx="8" fill="#fbfbfb" stroke="#777" stroke-width="1.5"/>
+<text x="482" y="122" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#333" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">BlockAllocator</text>
+<text x="482" y="144" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">free list, lowest ID first</text>
+<rect x="673" y="110" width="36" height="34" rx="4" fill="white" stroke="#999" stroke-width="1.2"/>
+<text x="691" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="717" y="110" width="36" height="34" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="2"/>
+<text x="735" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="761" y="110" width="36" height="34" rx="4" fill="white" stroke="#999" stroke-width="1.2"/>
+<text x="779" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="805" y="110" width="36" height="34" rx="4" fill="white" stroke="#999" stroke-width="1.2"/>
+<text x="823" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<rect x="849" y="110" width="36" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="2"/>
+<text x="867" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">4</text>
+<rect x="893" y="110" width="36" height="34" rx="4" fill="white" stroke="#999" stroke-width="1.2"/>
+<text x="911" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">5</text>
+<rect x="937" y="110" width="36" height="34" rx="4" fill="white" stroke="#999" stroke-width="1.2"/>
+<text x="955" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">6</text>
+<text x="985" y="133" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1141" y="126" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#333" font-weight="normal" text-anchor="end" font-style="normal" xml:space="preserve">used: 1, 4</text>
+<text x="1141" y="146" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#333" font-weight="normal" text-anchor="end" font-style="normal" xml:space="preserve">free: 0, 2, 3, 5, 6 …</text>
+<rect x="468" y="172" width="689" height="470" rx="8" fill="#fbfbfb" stroke="#777" stroke-width="1.5"/>
+<text x="482" y="200" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#333" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">PagedKVStore</text>
+<text x="618" y="200" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">keys[layer], values[layer]: [num_blocks, 16, kv_heads, head_dim]</text>
+<rect x="482" y="214" width="13" height="13" rx="1" fill="white" stroke="#444" stroke-width="1"/>
+<text x="502" y="226" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#444" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">each slot holds one token: [kv_heads, head_dim]</text>
+<rect x="480" y="238" width="665" height="118" rx="6" fill="white" stroke="#aaa" stroke-width="1.2"/>
+<text x="498" y="304" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#222" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">Layer 0</text>
+<text x="572" y="290" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Keys (K)</text>
+<text x="572" y="328" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Values (V)</text>
+<text x="660" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="11.5" fill="#444" font-weight="normal" text-anchor="end" font-style="normal" xml:space="preserve">block ID →</text>
+<text x="697" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="668" y="270" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="270" x2="671.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="270" x2="675.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="270" x2="678.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="270" x2="682.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="270" x2="686.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="270" x2="689.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="270" x2="693.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="270" x2="697.0" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="270" x2="700.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="270" x2="704.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="270" x2="707.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="270" x2="711.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="270" x2="715.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="270" x2="718.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="270" x2="722.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="284.0" x2="726" y2="284.0" stroke="#666" stroke-width="0.6"/>
+<rect x="668" y="310" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="310" x2="671.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="310" x2="675.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="310" x2="678.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="310" x2="682.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="310" x2="686.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="310" x2="689.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="310" x2="693.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="310" x2="697.0" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="310" x2="700.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="310" x2="704.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="310" x2="707.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="310" x2="711.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="310" x2="715.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="310" x2="718.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="310" x2="722.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="324.0" x2="726" y2="324.0" stroke="#666" stroke-width="0.6"/>
+<text x="761" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="732" y="270" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="270" x2="735.625" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="270" x2="739.25" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="270" x2="742.875" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="270" x2="746.5" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="270" x2="750.125" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="270" x2="753.75" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="270" x2="757.375" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="270" x2="761.0" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="270" x2="764.625" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="270" x2="768.25" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="270" x2="771.875" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="270" x2="775.5" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="270" x2="779.125" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="270" x2="782.75" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="270" x2="786.375" y2="298" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="284.0" x2="790" y2="284.0" stroke="#127a5e" stroke-width="0.6"/>
+<rect x="732" y="310" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="310" x2="735.625" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="310" x2="739.25" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="310" x2="742.875" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="310" x2="746.5" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="310" x2="750.125" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="310" x2="753.75" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="310" x2="757.375" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="310" x2="761.0" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="310" x2="764.625" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="310" x2="768.25" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="310" x2="771.875" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="310" x2="775.5" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="310" x2="779.125" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="310" x2="782.75" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="310" x2="786.375" y2="338" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="324.0" x2="790" y2="324.0" stroke="#127a5e" stroke-width="0.6"/>
+<text x="825" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="796" y="270" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="270" x2="799.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="270" x2="803.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="270" x2="806.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="270" x2="810.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="270" x2="814.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="270" x2="817.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="270" x2="821.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="270" x2="825.0" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="270" x2="828.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="270" x2="832.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="270" x2="835.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="270" x2="839.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="270" x2="843.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="270" x2="846.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="270" x2="850.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="284.0" x2="854" y2="284.0" stroke="#666" stroke-width="0.6"/>
+<rect x="796" y="310" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="310" x2="799.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="310" x2="803.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="310" x2="806.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="310" x2="810.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="310" x2="814.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="310" x2="817.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="310" x2="821.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="310" x2="825.0" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="310" x2="828.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="310" x2="832.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="310" x2="835.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="310" x2="839.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="310" x2="843.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="310" x2="846.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="310" x2="850.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="324.0" x2="854" y2="324.0" stroke="#666" stroke-width="0.6"/>
+<text x="889" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<rect x="860" y="270" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="270" x2="863.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="270" x2="867.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="270" x2="870.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="270" x2="874.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="270" x2="878.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="270" x2="881.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="270" x2="885.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="270" x2="889.0" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="270" x2="892.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="270" x2="896.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="270" x2="899.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="270" x2="903.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="270" x2="907.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="270" x2="910.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="270" x2="914.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="284.0" x2="918" y2="284.0" stroke="#666" stroke-width="0.6"/>
+<rect x="860" y="310" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="310" x2="863.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="310" x2="867.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="310" x2="870.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="310" x2="874.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="310" x2="878.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="310" x2="881.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="310" x2="885.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="310" x2="889.0" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="310" x2="892.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="310" x2="896.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="310" x2="899.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="310" x2="903.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="310" x2="907.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="310" x2="910.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="310" x2="914.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="324.0" x2="918" y2="324.0" stroke="#666" stroke-width="0.6"/>
+<text x="953" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">4</text>
+<rect x="924" y="270" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="270" x2="927.625" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="270" x2="931.25" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="270" x2="934.875" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="270" x2="938.5" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="270" x2="942.125" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="270" x2="945.75" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="270" x2="949.375" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="270" x2="953.0" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="270" x2="956.625" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="270" x2="960.25" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="270" x2="963.875" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="270" x2="967.5" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="270" x2="971.125" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="270" x2="974.75" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="270" x2="978.375" y2="298" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="284.0" x2="982" y2="284.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<rect x="924" y="310" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="310" x2="927.625" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="310" x2="931.25" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="310" x2="934.875" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="310" x2="938.5" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="310" x2="942.125" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="310" x2="945.75" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="310" x2="949.375" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="310" x2="953.0" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="310" x2="956.625" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="310" x2="960.25" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="310" x2="963.875" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="310" x2="967.5" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="310" x2="971.125" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="310" x2="974.75" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="310" x2="978.375" y2="338" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="324.0" x2="982" y2="324.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<text x="1017" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">5</text>
+<rect x="988" y="270" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="270" x2="991.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="270" x2="995.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="270" x2="998.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="270" x2="1002.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="270" x2="1006.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="270" x2="1009.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="270" x2="1013.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="270" x2="1017.0" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="270" x2="1020.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="270" x2="1024.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="270" x2="1027.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="270" x2="1031.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="270" x2="1035.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="270" x2="1038.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="270" x2="1042.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="284.0" x2="1046" y2="284.0" stroke="#666" stroke-width="0.6"/>
+<rect x="988" y="310" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="310" x2="991.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="310" x2="995.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="310" x2="998.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="310" x2="1002.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="310" x2="1006.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="310" x2="1009.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="310" x2="1013.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="310" x2="1017.0" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="310" x2="1020.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="310" x2="1024.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="310" x2="1027.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="310" x2="1031.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="310" x2="1035.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="310" x2="1038.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="310" x2="1042.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="324.0" x2="1046" y2="324.0" stroke="#666" stroke-width="0.6"/>
+<text x="1081" y="260" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">6</text>
+<rect x="1052" y="270" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="270" x2="1055.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="270" x2="1059.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="270" x2="1062.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="270" x2="1066.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="270" x2="1070.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="270" x2="1073.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="270" x2="1077.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="270" x2="1081.0" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="270" x2="1084.625" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="270" x2="1088.25" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="270" x2="1091.875" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="270" x2="1095.5" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="270" x2="1099.125" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="270" x2="1102.75" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="270" x2="1106.375" y2="298" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="284.0" x2="1110" y2="284.0" stroke="#666" stroke-width="0.6"/>
+<rect x="1052" y="310" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="310" x2="1055.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="310" x2="1059.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="310" x2="1062.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="310" x2="1066.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="310" x2="1070.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="310" x2="1073.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="310" x2="1077.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="310" x2="1081.0" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="310" x2="1084.625" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="310" x2="1088.25" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="310" x2="1091.875" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="310" x2="1095.5" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="310" x2="1099.125" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="310" x2="1102.75" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="310" x2="1106.375" y2="338" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="324.0" x2="1110" y2="324.0" stroke="#666" stroke-width="0.6"/>
+<text x="1118" y="290" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1118" y="330" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<rect x="480" y="368" width="665" height="118" rx="6" fill="white" stroke="#aaa" stroke-width="1.2"/>
+<text x="498" y="434" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#222" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">Layer 1</text>
+<text x="572" y="420" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Keys (K)</text>
+<text x="572" y="458" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Values (V)</text>
+<text x="697" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="668" y="400" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="400" x2="671.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="400" x2="675.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="400" x2="678.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="400" x2="682.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="400" x2="686.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="400" x2="689.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="400" x2="693.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="400" x2="697.0" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="400" x2="700.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="400" x2="704.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="400" x2="707.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="400" x2="711.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="400" x2="715.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="400" x2="718.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="400" x2="722.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="414.0" x2="726" y2="414.0" stroke="#666" stroke-width="0.6"/>
+<rect x="668" y="440" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="440" x2="671.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="440" x2="675.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="440" x2="678.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="440" x2="682.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="440" x2="686.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="440" x2="689.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="440" x2="693.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="440" x2="697.0" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="440" x2="700.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="440" x2="704.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="440" x2="707.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="440" x2="711.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="440" x2="715.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="440" x2="718.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="440" x2="722.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="454.0" x2="726" y2="454.0" stroke="#666" stroke-width="0.6"/>
+<text x="761" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="732" y="400" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="400" x2="735.625" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="400" x2="739.25" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="400" x2="742.875" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="400" x2="746.5" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="400" x2="750.125" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="400" x2="753.75" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="400" x2="757.375" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="400" x2="761.0" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="400" x2="764.625" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="400" x2="768.25" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="400" x2="771.875" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="400" x2="775.5" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="400" x2="779.125" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="400" x2="782.75" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="400" x2="786.375" y2="428" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="414.0" x2="790" y2="414.0" stroke="#127a5e" stroke-width="0.6"/>
+<rect x="732" y="440" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="440" x2="735.625" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="440" x2="739.25" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="440" x2="742.875" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="440" x2="746.5" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="440" x2="750.125" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="440" x2="753.75" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="440" x2="757.375" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="440" x2="761.0" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="440" x2="764.625" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="440" x2="768.25" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="440" x2="771.875" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="440" x2="775.5" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="440" x2="779.125" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="440" x2="782.75" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="440" x2="786.375" y2="468" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="454.0" x2="790" y2="454.0" stroke="#127a5e" stroke-width="0.6"/>
+<text x="825" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="796" y="400" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="400" x2="799.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="400" x2="803.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="400" x2="806.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="400" x2="810.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="400" x2="814.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="400" x2="817.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="400" x2="821.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="400" x2="825.0" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="400" x2="828.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="400" x2="832.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="400" x2="835.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="400" x2="839.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="400" x2="843.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="400" x2="846.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="400" x2="850.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="414.0" x2="854" y2="414.0" stroke="#666" stroke-width="0.6"/>
+<rect x="796" y="440" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="440" x2="799.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="440" x2="803.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="440" x2="806.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="440" x2="810.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="440" x2="814.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="440" x2="817.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="440" x2="821.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="440" x2="825.0" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="440" x2="828.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="440" x2="832.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="440" x2="835.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="440" x2="839.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="440" x2="843.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="440" x2="846.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="440" x2="850.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="454.0" x2="854" y2="454.0" stroke="#666" stroke-width="0.6"/>
+<text x="889" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<rect x="860" y="400" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="400" x2="863.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="400" x2="867.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="400" x2="870.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="400" x2="874.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="400" x2="878.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="400" x2="881.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="400" x2="885.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="400" x2="889.0" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="400" x2="892.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="400" x2="896.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="400" x2="899.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="400" x2="903.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="400" x2="907.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="400" x2="910.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="400" x2="914.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="414.0" x2="918" y2="414.0" stroke="#666" stroke-width="0.6"/>
+<rect x="860" y="440" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="440" x2="863.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="440" x2="867.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="440" x2="870.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="440" x2="874.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="440" x2="878.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="440" x2="881.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="440" x2="885.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="440" x2="889.0" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="440" x2="892.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="440" x2="896.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="440" x2="899.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="440" x2="903.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="440" x2="907.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="440" x2="910.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="440" x2="914.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="454.0" x2="918" y2="454.0" stroke="#666" stroke-width="0.6"/>
+<text x="953" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">4</text>
+<rect x="924" y="400" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="400" x2="927.625" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="400" x2="931.25" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="400" x2="934.875" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="400" x2="938.5" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="400" x2="942.125" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="400" x2="945.75" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="400" x2="949.375" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="400" x2="953.0" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="400" x2="956.625" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="400" x2="960.25" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="400" x2="963.875" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="400" x2="967.5" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="400" x2="971.125" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="400" x2="974.75" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="400" x2="978.375" y2="428" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="414.0" x2="982" y2="414.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<rect x="924" y="440" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="440" x2="927.625" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="440" x2="931.25" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="440" x2="934.875" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="440" x2="938.5" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="440" x2="942.125" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="440" x2="945.75" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="440" x2="949.375" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="440" x2="953.0" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="440" x2="956.625" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="440" x2="960.25" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="440" x2="963.875" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="440" x2="967.5" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="440" x2="971.125" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="440" x2="974.75" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="440" x2="978.375" y2="468" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="454.0" x2="982" y2="454.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<text x="1017" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">5</text>
+<rect x="988" y="400" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="400" x2="991.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="400" x2="995.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="400" x2="998.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="400" x2="1002.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="400" x2="1006.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="400" x2="1009.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="400" x2="1013.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="400" x2="1017.0" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="400" x2="1020.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="400" x2="1024.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="400" x2="1027.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="400" x2="1031.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="400" x2="1035.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="400" x2="1038.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="400" x2="1042.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="414.0" x2="1046" y2="414.0" stroke="#666" stroke-width="0.6"/>
+<rect x="988" y="440" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="440" x2="991.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="440" x2="995.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="440" x2="998.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="440" x2="1002.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="440" x2="1006.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="440" x2="1009.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="440" x2="1013.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="440" x2="1017.0" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="440" x2="1020.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="440" x2="1024.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="440" x2="1027.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="440" x2="1031.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="440" x2="1035.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="440" x2="1038.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="440" x2="1042.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="454.0" x2="1046" y2="454.0" stroke="#666" stroke-width="0.6"/>
+<text x="1081" y="390" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">6</text>
+<rect x="1052" y="400" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="400" x2="1055.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="400" x2="1059.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="400" x2="1062.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="400" x2="1066.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="400" x2="1070.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="400" x2="1073.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="400" x2="1077.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="400" x2="1081.0" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="400" x2="1084.625" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="400" x2="1088.25" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="400" x2="1091.875" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="400" x2="1095.5" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="400" x2="1099.125" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="400" x2="1102.75" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="400" x2="1106.375" y2="428" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="414.0" x2="1110" y2="414.0" stroke="#666" stroke-width="0.6"/>
+<rect x="1052" y="440" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="440" x2="1055.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="440" x2="1059.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="440" x2="1062.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="440" x2="1066.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="440" x2="1070.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="440" x2="1073.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="440" x2="1077.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="440" x2="1081.0" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="440" x2="1084.625" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="440" x2="1088.25" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="440" x2="1091.875" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="440" x2="1095.5" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="440" x2="1099.125" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="440" x2="1102.75" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="440" x2="1106.375" y2="468" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="454.0" x2="1110" y2="454.0" stroke="#666" stroke-width="0.6"/>
+<text x="1118" y="420" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1118" y="460" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="812.5" y="510" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="24" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">⋮</text>
+<rect x="480" y="516" width="665" height="118" rx="6" fill="white" stroke="#aaa" stroke-width="1.2"/>
+<text x="498" y="582" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#222" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">Layer N</text>
+<text x="572" y="568" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Keys (K)</text>
+<text x="572" y="606" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#1b3f8b" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">Values (V)</text>
+<text x="697" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="668" y="548" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="548" x2="671.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="548" x2="675.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="548" x2="678.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="548" x2="682.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="548" x2="686.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="548" x2="689.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="548" x2="693.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="548" x2="697.0" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="548" x2="700.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="548" x2="704.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="548" x2="707.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="548" x2="711.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="548" x2="715.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="548" x2="718.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="548" x2="722.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="562.0" x2="726" y2="562.0" stroke="#666" stroke-width="0.6"/>
+<rect x="668" y="588" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="671.625" y1="588" x2="671.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="675.25" y1="588" x2="675.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="678.875" y1="588" x2="678.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="682.5" y1="588" x2="682.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="686.125" y1="588" x2="686.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="689.75" y1="588" x2="689.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="693.375" y1="588" x2="693.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="697.0" y1="588" x2="697.0" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="700.625" y1="588" x2="700.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="704.25" y1="588" x2="704.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="707.875" y1="588" x2="707.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="711.5" y1="588" x2="711.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="715.125" y1="588" x2="715.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="718.75" y1="588" x2="718.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="722.375" y1="588" x2="722.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="668" y1="602.0" x2="726" y2="602.0" stroke="#666" stroke-width="0.6"/>
+<text x="761" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="732" y="548" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="548" x2="735.625" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="548" x2="739.25" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="548" x2="742.875" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="548" x2="746.5" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="548" x2="750.125" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="548" x2="753.75" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="548" x2="757.375" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="548" x2="761.0" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="548" x2="764.625" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="548" x2="768.25" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="548" x2="771.875" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="548" x2="775.5" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="548" x2="779.125" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="548" x2="782.75" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="548" x2="786.375" y2="576" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="562.0" x2="790" y2="562.0" stroke="#127a5e" stroke-width="0.6"/>
+<rect x="732" y="588" width="58" height="28" rx="2" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<line x1="735.625" y1="588" x2="735.625" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="739.25" y1="588" x2="739.25" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="742.875" y1="588" x2="742.875" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="746.5" y1="588" x2="746.5" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="750.125" y1="588" x2="750.125" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="753.75" y1="588" x2="753.75" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="757.375" y1="588" x2="757.375" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="761.0" y1="588" x2="761.0" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="764.625" y1="588" x2="764.625" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="768.25" y1="588" x2="768.25" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="771.875" y1="588" x2="771.875" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="775.5" y1="588" x2="775.5" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="779.125" y1="588" x2="779.125" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="782.75" y1="588" x2="782.75" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="786.375" y1="588" x2="786.375" y2="616" stroke="#127a5e" stroke-width="0.6"/>
+<line x1="732" y1="602.0" x2="790" y2="602.0" stroke="#127a5e" stroke-width="0.6"/>
+<text x="825" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="796" y="548" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="548" x2="799.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="548" x2="803.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="548" x2="806.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="548" x2="810.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="548" x2="814.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="548" x2="817.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="548" x2="821.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="548" x2="825.0" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="548" x2="828.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="548" x2="832.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="548" x2="835.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="548" x2="839.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="548" x2="843.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="548" x2="846.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="548" x2="850.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="562.0" x2="854" y2="562.0" stroke="#666" stroke-width="0.6"/>
+<rect x="796" y="588" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="799.625" y1="588" x2="799.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="803.25" y1="588" x2="803.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="806.875" y1="588" x2="806.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="810.5" y1="588" x2="810.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="814.125" y1="588" x2="814.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="817.75" y1="588" x2="817.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="821.375" y1="588" x2="821.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="825.0" y1="588" x2="825.0" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="828.625" y1="588" x2="828.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="832.25" y1="588" x2="832.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="835.875" y1="588" x2="835.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="839.5" y1="588" x2="839.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="843.125" y1="588" x2="843.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="846.75" y1="588" x2="846.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="850.375" y1="588" x2="850.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="796" y1="602.0" x2="854" y2="602.0" stroke="#666" stroke-width="0.6"/>
+<text x="889" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<rect x="860" y="548" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="548" x2="863.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="548" x2="867.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="548" x2="870.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="548" x2="874.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="548" x2="878.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="548" x2="881.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="548" x2="885.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="548" x2="889.0" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="548" x2="892.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="548" x2="896.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="548" x2="899.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="548" x2="903.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="548" x2="907.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="548" x2="910.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="548" x2="914.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="562.0" x2="918" y2="562.0" stroke="#666" stroke-width="0.6"/>
+<rect x="860" y="588" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="863.625" y1="588" x2="863.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="867.25" y1="588" x2="867.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="870.875" y1="588" x2="870.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="874.5" y1="588" x2="874.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="878.125" y1="588" x2="878.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="881.75" y1="588" x2="881.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="885.375" y1="588" x2="885.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="889.0" y1="588" x2="889.0" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="892.625" y1="588" x2="892.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="896.25" y1="588" x2="896.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="899.875" y1="588" x2="899.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="903.5" y1="588" x2="903.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="907.125" y1="588" x2="907.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="910.75" y1="588" x2="910.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="914.375" y1="588" x2="914.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="860" y1="602.0" x2="918" y2="602.0" stroke="#666" stroke-width="0.6"/>
+<text x="953" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">4</text>
+<rect x="924" y="548" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="548" x2="927.625" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="548" x2="931.25" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="548" x2="934.875" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="548" x2="938.5" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="548" x2="942.125" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="548" x2="945.75" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="548" x2="949.375" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="548" x2="953.0" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="548" x2="956.625" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="548" x2="960.25" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="548" x2="963.875" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="548" x2="967.5" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="548" x2="971.125" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="548" x2="974.75" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="548" x2="978.375" y2="576" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="562.0" x2="982" y2="562.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<rect x="924" y="588" width="58" height="28" rx="2" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<line x1="927.625" y1="588" x2="927.625" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="931.25" y1="588" x2="931.25" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="934.875" y1="588" x2="934.875" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="938.5" y1="588" x2="938.5" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="942.125" y1="588" x2="942.125" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="945.75" y1="588" x2="945.75" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="949.375" y1="588" x2="949.375" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="953.0" y1="588" x2="953.0" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="956.625" y1="588" x2="956.625" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="960.25" y1="588" x2="960.25" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="963.875" y1="588" x2="963.875" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="967.5" y1="588" x2="967.5" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="971.125" y1="588" x2="971.125" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="974.75" y1="588" x2="974.75" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="978.375" y1="588" x2="978.375" y2="616" stroke="#1f5fbf" stroke-width="0.6"/>
+<line x1="924" y1="602.0" x2="982" y2="602.0" stroke="#1f5fbf" stroke-width="0.6"/>
+<text x="1017" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">5</text>
+<rect x="988" y="548" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="548" x2="991.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="548" x2="995.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="548" x2="998.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="548" x2="1002.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="548" x2="1006.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="548" x2="1009.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="548" x2="1013.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="548" x2="1017.0" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="548" x2="1020.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="548" x2="1024.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="548" x2="1027.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="548" x2="1031.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="548" x2="1035.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="548" x2="1038.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="548" x2="1042.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="562.0" x2="1046" y2="562.0" stroke="#666" stroke-width="0.6"/>
+<rect x="988" y="588" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="991.625" y1="588" x2="991.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="995.25" y1="588" x2="995.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="998.875" y1="588" x2="998.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1002.5" y1="588" x2="1002.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1006.125" y1="588" x2="1006.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1009.75" y1="588" x2="1009.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1013.375" y1="588" x2="1013.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1017.0" y1="588" x2="1017.0" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1020.625" y1="588" x2="1020.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1024.25" y1="588" x2="1024.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1027.875" y1="588" x2="1027.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1031.5" y1="588" x2="1031.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1035.125" y1="588" x2="1035.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1038.75" y1="588" x2="1038.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1042.375" y1="588" x2="1042.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="988" y1="602.0" x2="1046" y2="602.0" stroke="#666" stroke-width="0.6"/>
+<text x="1081" y="538" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#666" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">6</text>
+<rect x="1052" y="548" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="548" x2="1055.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="548" x2="1059.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="548" x2="1062.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="548" x2="1066.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="548" x2="1070.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="548" x2="1073.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="548" x2="1077.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="548" x2="1081.0" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="548" x2="1084.625" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="548" x2="1088.25" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="548" x2="1091.875" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="548" x2="1095.5" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="548" x2="1099.125" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="548" x2="1102.75" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="548" x2="1106.375" y2="576" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="562.0" x2="1110" y2="562.0" stroke="#666" stroke-width="0.6"/>
+<rect x="1052" y="588" width="58" height="28" rx="2" fill="white" stroke="#666" stroke-width="1.5"/>
+<line x1="1055.625" y1="588" x2="1055.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1059.25" y1="588" x2="1059.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1062.875" y1="588" x2="1062.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1066.5" y1="588" x2="1066.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1070.125" y1="588" x2="1070.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1073.75" y1="588" x2="1073.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1077.375" y1="588" x2="1077.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1081.0" y1="588" x2="1081.0" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1084.625" y1="588" x2="1084.625" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1088.25" y1="588" x2="1088.25" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1091.875" y1="588" x2="1091.875" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1095.5" y1="588" x2="1095.5" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1099.125" y1="588" x2="1099.125" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1102.75" y1="588" x2="1102.75" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1106.375" y1="588" x2="1106.375" y2="616" stroke="#666" stroke-width="0.6"/>
+<line x1="1052" y1="602.0" x2="1110" y2="602.0" stroke="#666" stroke-width="0.6"/>
+<text x="1118" y="568" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1118" y="608" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="812.5" y="686" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">Same physical block IDs (e.g., 4 and 1) are used in every layer,</text>
+<text x="812.5" y="708" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15.5" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">but each layer stores different K/V contents.</text>
+<rect x="1215" y="30" width="365" height="94" rx="8" fill="white" stroke="#333" stroke-width="2"/>
+<text x="1397" y="62" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#222" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">PagedLayerKVCache (layer i)</text>
+<text x="1397" y="88" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="14" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">write() · paged() · gathered()</text>
+<text x="1397" y="110" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">length = sequence.length</text>
+<rect x="1215" y="170" width="365" height="138" rx="8" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="2"/>
+<text x="1231" y="198" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#1f5fbf" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">paged() → PagedKV</text>
+<text x="1231" y="224" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">keys = store.keys[i]    (no copy)</text>
+<text x="1231" y="246" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">values = store.values[i]</text>
+<text x="1231" y="268" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">block_table = [[4, 1]]  [batch, blocks]</text>
+<text x="1231" y="290" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">max_seqlen_k = 2 × 16 = 32</text>
+<rect x="1215" y="334" width="365" height="76" rx="8" fill="#f1eafa" stroke="#5b2d8e" stroke-width="2"/>
+<text x="1397" y="362" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="17" fill="#5b2d8e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">flash_attn_varlen_func</text>
+<text x="1397" y="388" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">reads blocks in place · CUDA inference</text>
+<line x1="1397" y1="308" x2="1397" y2="332" stroke="#5b2d8e" stroke-width="2" marker-end="url(#ap)"/>
+<rect x="1215" y="452" width="365" height="88" rx="8" fill="#e3f4ee" stroke="#127a5e" stroke-width="2"/>
+<text x="1231" y="480" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#127a5e" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">gathered() → GatheredKV</text>
+<text x="1231" y="506" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="13.5" fill="#222" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">store.gather(i, block_table, 21)</text>
+<text x="1231" y="528" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">index_select + reshape (copy)</text>
+<rect x="1215" y="566" width="365" height="76" rx="8" fill="#f1eafa" stroke="#5b2d8e" stroke-width="2"/>
+<text x="1397" y="594" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="17" fill="#5b2d8e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">[1, kv_heads, 21, head_dim]</text>
+<text x="1397" y="620" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">contiguous input for SDPA · CPU / MPS</text>
+<line x1="1397" y1="540" x2="1397" y2="564" stroke="#5b2d8e" stroke-width="2" marker-end="url(#ap)"/>
+<path d="M1305,124 L1305,168" fill="none" stroke="#1f5fbf" stroke-width="2" marker-end="url(#ab)"/>
+<path d="M1245,124 L1245,140 L1203,140 L1203,496 L1213,496" fill="none" stroke="#127a5e" stroke-width="2" marker-end="url(#ag)"/>
+<text x="1315" y="150" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#1f5fbf" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">CUDA, eval</text>
+<text x="1197" y="320" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="12.5" fill="#127a5e" text-anchor="middle" transform="rotate(-90 1197 320)">otherwise</text>
+<rect x="20" y="730" width="930" height="460" rx="8" fill="white" stroke="#d9661f" stroke-width="2.5"/>
+<text x="485" y="766" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="22" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Decode step: commit length, then write</text>
+<rect x="40" y="786" width="890" height="62" rx="8" fill="#fafafa" stroke="#bbb" stroke-width="1.2"/>
+<text x="58" y="812" font-size="16.5" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#d9661f" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">① runtime  </tspan><tspan fill="#222" font-weight="bold" font-family="DejaVu Sans Mono, Liberation Mono, monospace">cache.extend(4)</tspan><tspan fill="#333" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">   length 14 → 18 before the forward pass</tspan></text>
+<text x="58" y="836" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">host int only, so no GPU sync; a failed forward calls rollback(14)</text>
+<rect x="40" y="860" width="890" height="62" rx="8" fill="#fafafa" stroke="#bbb" stroke-width="1.2"/>
+<text x="58" y="886" font-size="16.5" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#d9661f" font-weight="bold" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">② every layer  </tspan><tspan fill="#222" font-weight="bold" font-family="DejaVu Sans Mono, Liberation Mono, monospace">write(K, V, position_ids=[14, 15, 16, 17])</tspan></text>
+<text x="58" y="910" font-size="14" text-anchor="start" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" xml:space="preserve"><tspan fill="#555" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">→ PagedKVStore.write: </tspan><tspan fill="#444" font-weight="normal" font-family="DejaVu Sans Mono, Liberation Mono, monospace">block_table.gather(pos // 16)</tspan><tspan fill="#555" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">, slot </tspan><tspan fill="#444" font-weight="normal" font-family="DejaVu Sans Mono, Liberation Mono, monospace">pos % 16</tspan><tspan fill="#555" font-weight="normal" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif">, one index_put_ per K/V</tspan></text>
+<text x="58" y="980" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">new K/V:</text>
+<rect x="58" y="992" width="36" height="38" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="76" y="1018" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">A</text>
+<rect x="102" y="992" width="36" height="38" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="120" y="1018" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">B</text>
+<rect x="146" y="992" width="36" height="38" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="164" y="1018" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">C</text>
+<rect x="190" y="992" width="36" height="38" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="208" y="1018" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">D</text>
+<text x="58" y="1060" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13.5" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">positions 14, 15, 16, 17</text>
+<line x1="238" y1="1011" x2="284" y2="1011" stroke="#777" stroke-width="3" marker-end="url(#a)"/>
+<text x="470" y="966" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Physical block 4  (tokens 0–15)</text>
+<rect x="300" y="994" width="34" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<text x="317.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="340" y="994" width="34" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<text x="357.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="380" y="994" width="34" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<text x="397.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<text x="437.0" y="1017.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">…</text>
+<rect x="460" y="994" width="34" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<text x="477.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">12</text>
+<rect x="500" y="994" width="34" height="34" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="1.5"/>
+<text x="517.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">13</text>
+<rect x="540" y="994" width="34" height="34" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="557.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">14</text>
+<text x="557.0" y="1018.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">A</text>
+<rect x="580" y="994" width="34" height="34" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="597.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">15</text>
+<text x="597.0" y="1018.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">B</text>
+<text x="470" y="1062" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14.5" fill="#1f5fbf" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">A and B fill slots 14–15</text>
+<line x1="648" y1="955" x2="648" y2="1075" stroke="#aaa" stroke-width="1.5" stroke-dasharray="5,4"/>
+<text x="790" y="966" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Physical block 1  (tokens 16–31)</text>
+<rect x="662" y="994" width="34" height="34" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="679.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<text x="679.0" y="1018.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">C</text>
+<rect x="702" y="994" width="34" height="34" rx="4" fill="#fdeee4" stroke="#d9661f" stroke-width="2"/>
+<text x="719.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<text x="719.0" y="1018.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#d9661f" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">D</text>
+<rect x="742" y="994" width="34" height="34" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<text x="759.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="782" y="994" width="34" height="34" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<text x="799.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<text x="839.0" y="1017.0" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="18" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">…</text>
+<rect x="862" y="994" width="34" height="34" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<text x="879.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">14</text>
+<rect x="902" y="994" width="34" height="34" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="1.5"/>
+<text x="919.0" y="986" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#333" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">15</text>
+<text x="790" y="1062" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14.5" fill="#127a5e" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">C and D fill slots 0–1</text>
+<rect x="40" y="1092" width="890" height="78" rx="8" fill="#fcfcfc" stroke="#ddd" stroke-width="1"/>
+<text x="58" y="1120" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14.5" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">No per-layer length and no separate CUDA-graph commit:</text>
+<text x="58" y="1144" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="14.5" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">replay repeats only the device writes, and the host length was already committed by extend().</text>
+<rect x="975" y="730" width="605" height="460" rx="8" fill="white" stroke="#1b3f8b" stroke-width="2.5"/>
+<text x="1277" y="766" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="22" fill="#1b3f8b" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">Batched decode &amp; CUDA graphs</text>
+<text x="1277" y="790" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="14" fill="#555" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">PagedBatchLayerKVCache · one per layer</text>
+<text x="999" y="830" font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="14.5" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">padded block_table  [batch, max_blocks]  int32</text>
+<text x="999" y="875" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">req A</text>
+<rect x="1075" y="848" width="42" height="38" rx="4" fill="#e8f0fc" stroke="#1f5fbf" stroke-width="2"/>
+<text x="1096" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#1f5fbf" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">4</text>
+<rect x="1125" y="848" width="42" height="38" rx="4" fill="#e3f4ee" stroke="#127a5e" stroke-width="2"/>
+<text x="1146" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#127a5e" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">1</text>
+<rect x="1175" y="848" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1196" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="1225" y="848" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1246" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="1275" y="848" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1296" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="1325" y="848" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1346" y="873" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<text x="999" y="923" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="bold" text-anchor="start" font-style="normal" xml:space="preserve">req B</text>
+<rect x="1075" y="896" width="42" height="38" rx="4" fill="#f2f2f2" stroke="#666" stroke-width="2"/>
+<text x="1096" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#666" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">2</text>
+<rect x="1125" y="896" width="42" height="38" rx="4" fill="#f2f2f2" stroke="#666" stroke-width="2"/>
+<text x="1146" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#666" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">3</text>
+<rect x="1175" y="896" width="42" height="38" rx="4" fill="#f2f2f2" stroke="#666" stroke-width="2"/>
+<text x="1196" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#666" font-weight="bold" text-anchor="middle" font-style="normal" xml:space="preserve">5</text>
+<rect x="1225" y="896" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1246" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="1275" y="896" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1296" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<rect x="1325" y="896" width="42" height="38" rx="4" fill="white" stroke="#bbb" stroke-width="1.2" stroke-dasharray="3,3"/>
+<text x="1346" y="921" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#bbb" font-weight="normal" text-anchor="middle" font-style="normal" xml:space="preserve">0</text>
+<text x="1381" y="874" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1381" y="922" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="16" fill="#555" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">…</text>
+<text x="1400" y="960" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" fill="#555" font-weight="normal" text-anchor="end" font-style="normal" xml:space="preserve">dashed = zero padding</text>
+<text x="999" y="1010" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">• one store.write for the whole batch, same code as one request</text>
+<text x="999" y="1040" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">• padding is never read: seqused_k bounds each row</text>
+<text x="999" y="1070" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">• graph capture sizes the table for max_position_embeddings</text>
+<text x="999" y="1100" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">• rebind(sequences) rewrites the same tensor in place,</text>
+<text x="999" y="1130" font-family="Noto Sans, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#333" font-weight="normal" text-anchor="start" font-style="normal" xml:space="preserve">   so the captured graph replays for a new request batch</text>
+</svg>

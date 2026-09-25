@@ -18,7 +18,7 @@ A request cache contains its logical length, capacity, and ordered block
 table. A physical block ID selects the corresponding K/V block in every layer.
 The reference backend gathers pages into the ordinary SDPA layout.
 
-![Paged KV-cache layout](../img/paged-kv-cache.png)
+![Paged KV-cache layout](../img/paged-kv-cache.svg)
 
 The optional dense backend allocates contiguous per-request tensors:
 
