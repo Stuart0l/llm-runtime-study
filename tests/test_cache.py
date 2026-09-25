@@ -7,7 +7,7 @@ import torch
 from mini_llm.cache import CacheAllocation, KVCacheError
 from mini_llm.cache.dense import DenseKVCacheManager
 from mini_llm.config import Qwen3Config
-from mini_llm.cache.paged import PagedBatchLayerKVCache, PagedKVCacheManager
+from mini_llm.cache.paged import PagedBatchKVCache, PagedKVCacheManager
 from mini_llm.model.qwen import Qwen3ForCausalLM
 from tests.test_qwen_model import _tiny_config, _tiny_config_data
 
@@ -258,7 +258,7 @@ class PagedKVCacheManagerTests(unittest.TestCase):
 
         manager.store.keys[0].zero_()
         manager.store.values[0].zero_()
-        batch = PagedBatchLayerKVCache(manager.store, 0, (first, second))
+        batch = PagedBatchKVCache(manager.store, (first, second)).layers[0]
         batched = torch.cat((keys, keys))
         batch.write(batched, batched + 100, torch.tensor([[0, 1, 2], [0, 1, 2]]))
 

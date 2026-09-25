@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import torch
 
-from mini_llm.cache.paged import PagedBatchLayerKVCache, PagedSequenceKVCache
+from mini_llm.cache.paged import PagedBatchKVCache, PagedSequenceKVCache
 from mini_llm.model.base import CausalLMBase
 
 
@@ -24,12 +24,10 @@ class PagedGraphCache:
         self.batch_size = len(caches)
         # Capture must see the widest block table a request can ever use, so
         # every later bind fits into the tensors the graph recorded.
-        self.layers = [
-            PagedBatchLayerKVCache(
-                self.store, layer_index, caches, block_table_capacity=max_blocks
-            )
-            for layer_index in range(self.store.spec.num_layers)
-        ]
+        self.batch = PagedBatchKVCache(
+            self.store, caches, block_table_capacity=max_blocks
+        )
+        self.layers = self.batch.layers
         self.bind(caches)
 
     def bind(self, caches: Sequence[PagedSequenceKVCache]) -> None:
@@ -56,8 +54,7 @@ class PagedGraphCache:
             raise ValueError("graph caches must use the captured paged store")
         if any(cache.length == 0 for cache in caches):
             raise ValueError("prefill every cache before binding it to a graph")
-        for layer in self.layers:
-            layer.rebind(caches)
+        self.batch.rebind(caches)
         self.requests = caches
 
     @property

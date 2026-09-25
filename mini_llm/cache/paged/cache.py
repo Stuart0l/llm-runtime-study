@@ -70,26 +70,81 @@ class PagedLayerKVCache:
 
 
 class PagedBatchLayerKVCache:
-    """One layer across a batch of requests sharing one paged store.
+    """One layer of a :class:`PagedBatchKVCache`."""
 
-    The padded block table is allocated once and rewritten in place by
-    :meth:`rebind`, so CUDA graphs capture stable device addresses.
+    __slots__ = ("batch", "layer_index")
+
+    def __init__(self, batch: "PagedBatchKVCache", layer_index: int) -> None:
+        self.batch = batch
+        self.layer_index = layer_index
+
+    @property
+    def length(self) -> int:
+        return self.batch.length
+
+    def write(
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> None:
+        batch = self.batch
+        validate_kv_states(
+            keys, values, spec=batch.store.spec, batch_size=len(batch.sequences)
+        )
+        batch.store.write(
+            self.layer_index, batch.block_table, position_ids, keys, values
+        )
+
+    def gathered(self) -> GatheredKV:
+        """Gather every request's prefix into one zero-padded batch allocation."""
+
+        store = self.batch.store
+        views = [
+            store.gather(self.layer_index, sequence.block_table, sequence.length)
+            for sequence in self.batch.sequences
+        ]
+        length = max(view.keys.shape[2] for view in views)
+        _, heads, _, head_dim = views[0].keys.shape
+        batch_shape = (len(views), heads, length, head_dim)
+        keys = views[0].keys.new_zeros(batch_shape)
+        values = views[0].values.new_zeros(batch_shape)
+        for index, view in enumerate(views):
+            request_length = view.keys.shape[2]
+            keys[index, :, :request_length].copy_(view.keys[0])
+            values[index, :, :request_length].copy_(view.values[0])
+        return GatheredKV(keys=keys, values=values)
+
+    def paged(self) -> PagedKV:
+        store = self.batch.store
+        block_table = self.batch.block_table
+        return PagedKV(
+            keys=store.keys[self.layer_index],
+            values=store.values[self.layer_index],
+            block_table=block_table,
+            max_seqlen_k=block_table.shape[1] * store.block_size,
+        )
+
+
+class PagedBatchKVCache:
+    """A batch of requests sharing one paged store and one padded block table.
+
+    Every layer view reads the same table. It is allocated once and rewritten
+    in place by :meth:`rebind`, so CUDA graphs capture stable device addresses.
     """
 
-    __slots__ = ("store", "layer_index", "sequences", "block_table")
+    __slots__ = ("store", "block_table", "sequences", "layers")
 
     def __init__(
         self,
         store: PagedKVStore,
-        layer_index: int,
         sequences: Sequence["PagedSequenceKVCache"],
         *,
         block_table_capacity: int | None = None,
     ) -> None:
         if not sequences:
-            raise KVCacheError("a batched layer cache needs at least one request")
+            raise KVCacheError("a batched cache needs at least one request")
         self.store = store
-        self.layer_index = layer_index
         block_count = block_table_capacity or max(
             sequence.block_table.numel() for sequence in sequences
         )
@@ -97,6 +152,10 @@ class PagedBatchLayerKVCache:
             (len(sequences), block_count), dtype=torch.int32, device=store.spec.device
         )
         self.sequences: tuple[PagedSequenceKVCache, ...] = ()
+        self.layers = [
+            PagedBatchLayerKVCache(self, layer_index)
+            for layer_index in range(store.spec.num_layers)
+        ]
         self.rebind(sequences)
 
     def rebind(self, sequences: Sequence["PagedSequenceKVCache"]) -> None:
@@ -126,47 +185,6 @@ class PagedBatchLayerKVCache:
     @property
     def length(self) -> int:
         return max(sequence.length for sequence in self.sequences)
-
-    def write(
-        self,
-        keys: torch.Tensor,
-        values: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> None:
-        validate_kv_states(
-            keys, values, spec=self.store.spec, batch_size=len(self.sequences)
-        )
-        self.store.write(
-            self.layer_index, self.block_table, position_ids, keys, values
-        )
-
-    def gathered(self) -> GatheredKV:
-        """Gather every request's prefix into one zero-padded batch allocation."""
-
-        views = [
-            self.store.gather(
-                self.layer_index, sequence.block_table, sequence.length
-            )
-            for sequence in self.sequences
-        ]
-        length = max(view.keys.shape[2] for view in views)
-        _, heads, _, head_dim = views[0].keys.shape
-        batch_shape = (len(views), heads, length, head_dim)
-        keys = views[0].keys.new_zeros(batch_shape)
-        values = views[0].values.new_zeros(batch_shape)
-        for index, view in enumerate(views):
-            request_length = view.keys.shape[2]
-            keys[index, :, :request_length].copy_(view.keys[0])
-            values[index, :, :request_length].copy_(view.values[0])
-        return GatheredKV(keys=keys, values=values)
-
-    def paged(self) -> PagedKV:
-        return PagedKV(
-            keys=self.store.keys[self.layer_index],
-            values=self.store.values[self.layer_index],
-            block_table=self.block_table,
-            max_seqlen_k=self.block_table.shape[1] * self.store.block_size,
-        )
 
 
 class PagedSequenceKVCache:
@@ -224,10 +242,7 @@ class PagedSequenceKVCache:
             if not isinstance(cache, PagedSequenceKVCache) or cache.store is not self.store:
                 raise KVCacheError("a cache batch must share one paged K/V store")
             sequences.append(cache)
-        return [
-            PagedBatchLayerKVCache(self.store, layer_index, sequences)
-            for layer_index in range(self.store.spec.num_layers)
-        ]
+        return PagedBatchKVCache(self.store, sequences).layers
 
     def release_blocks(self) -> list[int]:
         """Invalidate this cache and return its physical block IDs."""

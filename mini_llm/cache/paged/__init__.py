@@ -2,6 +2,7 @@
 
 from mini_llm.cache.paged.blocks import BlockAllocator
 from mini_llm.cache.paged.cache import (
+    PagedBatchKVCache,
     PagedBatchLayerKVCache,
     PagedKVCacheManager,
     PagedLayerKVCache,
@@ -11,6 +12,7 @@ from mini_llm.cache.paged.store import PagedKVStore
 
 __all__ = [
     "BlockAllocator",
+    "PagedBatchKVCache",
     "PagedBatchLayerKVCache",
     "PagedKVCacheManager",
     "PagedKVStore",
