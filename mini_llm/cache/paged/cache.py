@@ -319,6 +319,9 @@ class PagedKVCacheManager:
     def last_allocation(self) -> CacheAllocation | None:
         return self._last_allocation
 
+    def can_allocate(self, capacity: int) -> bool:
+        return math.ceil(capacity / self.block_size) <= self.blocks.free_blocks
+
     def allocate(self, capacity: int) -> PagedSequenceKVCache:
         """Reserve enough exclusive blocks for one logical sequence."""
 

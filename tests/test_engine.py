@@ -178,18 +178,6 @@ class EngineTests(unittest.TestCase):
                 cache_backend="unknown",  # type: ignore[arg-type]
             )
 
-    def test_rejects_request_batch_larger_than_configured_maximum(self) -> None:
-        engine = self._mock_engine()
-
-        with self.assertRaisesRegex(EngineError, "exceeds engine maximum"):
-            engine.generate(
-                (
-                    [ChatMessage("user", "first")],
-                    [ChatMessage("user", "second")],
-                ),
-                max_new_tokens=1,
-            )
-
     def test_to_rejects_moving_with_an_active_request_cache(self) -> None:
         engine = self._mock_engine()
         manager = MagicMock()

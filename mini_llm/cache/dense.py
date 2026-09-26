@@ -253,6 +253,9 @@ class DenseKVCacheManager:
     def last_allocation(self) -> CacheAllocation | None:
         return self._last_allocation
 
+    def can_allocate(self, capacity: int) -> bool:
+        return self.used_tokens + capacity <= self.capacity
+
     def allocate(self, capacity: int) -> DenseSequenceKVCache:
         if capacity <= 0:
             raise KVCacheError(f"cache capacity must be positive, got {capacity}")

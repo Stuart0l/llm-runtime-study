@@ -18,7 +18,11 @@ from mini_llm.cache import (
 from mini_llm.cache.paged import PagedSequenceKVCache
 from mini_llm.config import DecoderConfig, load_config
 from mini_llm.cuda_graph import PagedDecodeGraphCache
-from mini_llm.generation import GenerationEvent, generate as generate_text
+from mini_llm.generation import (
+    BatchScheduler,
+    GenerationEvent,
+    generate as generate_text,
+)
 from mini_llm.model.base import CausalLMBase
 from mini_llm.model.contracts import RuntimeCausalLM
 from mini_llm.model.loader import load_model
@@ -219,13 +223,7 @@ class Engine:
         sampling: SamplingConfig = SamplingConfig(),
         enable_thinking: bool = False,
     ) -> Iterator[tuple[int, GenerationEvent]]:
-        """Generate one or more request message lists."""
-
-        if len(message_batches) > self.max_batch_size:
-            raise EngineError(
-                f"batch size {len(message_batches)} exceeds engine maximum "
-                f"{self.max_batch_size}"
-            )
+        """Generate request message lists; requests beyond max_batch_size wait for a free slot."""
 
         return generate_text(
             self.model,
@@ -237,6 +235,20 @@ class Engine:
             max_seq_len=self.max_seq_len,
             synchronize=self.synchronize,
             cache_manager=self._ensure_cache_manager(),
+            decode_factory=self._make_decode,
+            max_batch_size=self.max_batch_size,
+        )
+
+    def create_scheduler(self) -> BatchScheduler:
+        """Create a continuous-batching scheduler over this engine's cache and decode graphs."""
+
+        return BatchScheduler(
+            self.model,
+            self.tokenizer,
+            cache_manager=self._ensure_cache_manager(),
+            max_batch_size=self.max_batch_size,
+            max_seq_len=self.max_seq_len,
+            synchronize=self.synchronize,
             decode_factory=self._make_decode,
         )
 

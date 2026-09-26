@@ -7,7 +7,11 @@ import unittest
 import torch
 from torch import nn
 
-from mini_llm.generation import GenerationError, generate as generate_text
+from mini_llm.generation import (
+    BatchScheduler,
+    GenerationError,
+    generate as generate_text,
+)
 from mini_llm.sampling import (
     SamplingConfig,
     SamplingError,
@@ -116,16 +120,23 @@ class _SplitUnicodeTokenizer:
 
 
 class _FakeCacheManager:
-    def __init__(self) -> None:
+    def __init__(self, capacity: int = 64) -> None:
+        self.capacity = capacity
+        self.used = 0
         self.allocated_capacities: list[int] = []
         self.released: list[object] = []
 
+    def can_allocate(self, capacity: int) -> bool:
+        return self.used + capacity <= self.capacity
+
     def allocate(self, capacity: int) -> object:
         cache = SimpleNamespace(capacity=capacity)
+        self.used += capacity
         self.allocated_capacities.append(capacity)
         return cache
 
     def release(self, cache: object) -> None:
+        self.used -= cache.capacity
         self.released.append(cache)
 
 
@@ -495,6 +506,108 @@ class GenerationTests(unittest.TestCase):
                 [ChatMessage("user", "question")],
                 max_new_tokens=0,
             )
+
+
+def _tokens(events):
+    return [(index, event.token_id) for index, event in events]
+
+
+class BatchSchedulerTests(unittest.TestCase):
+    def test_request_added_mid_generation_joins_the_running_batch(self) -> None:
+        model = _FakeBatchModel()
+        scheduler = BatchScheduler(
+            model,
+            _BatchTokenizer(),
+            cache_manager=model.cache_manager,
+            max_batch_size=2,
+        )
+        scheduler.add_request([ChatMessage("user", "second")], max_new_tokens=4)
+        self.assertEqual(_tokens(scheduler.step()), [(0, 3)])
+
+        scheduler.add_request([ChatMessage("user", "first")], max_new_tokens=4)
+        self.assertEqual(_tokens(scheduler.step()), [(0, 2), (1, 2)])
+
+        final = scheduler.step()
+        self.assertEqual(_tokens(final), [(0, 4), (1, 4)])
+        self.assertTrue(all(event.finish_reason == "eos" for _, event in final))
+        self.assertEqual(model.decode_batches, [[3], [2, 2]])
+        self.assertFalse(scheduler.has_unfinished)
+
+    def test_requests_beyond_max_batch_size_wait_for_a_free_slot(self) -> None:
+        model = _FakeBatchModel()
+        events = generate_text(
+            model,
+            _BatchTokenizer(),
+            ([ChatMessage("user", "first")], [ChatMessage("user", "second")]),
+            max_new_tokens=4,
+            cache_manager=model.cache_manager,
+            max_batch_size=1,
+        )
+
+        self.assertEqual(
+            _tokens(events), [(0, 2), (0, 4), (1, 3), (1, 2), (1, 4)]
+        )
+        self.assertEqual(model.decode_batches, [[2], [3], [2]])
+
+    def test_admission_waits_for_free_kv_capacity(self) -> None:
+        model = _FakeBatchModel()
+        model.cache_manager = _FakeCacheManager(capacity=8)
+        events = generate_text(
+            model,
+            _BatchTokenizer(),
+            ([ChatMessage("user", "first")], [ChatMessage("user", "second")]),
+            max_new_tokens=4,
+            cache_manager=model.cache_manager,
+            max_batch_size=2,
+        )
+
+        self.assertEqual(
+            _tokens(events), [(0, 2), (0, 4), (1, 3), (1, 2), (1, 4)]
+        )
+        self.assertEqual(model.decode_batches, [[2], [3], [2]])
+        self.assertEqual(model.cache_manager.used, 0)
+
+    def test_rejects_requests_that_can_never_be_served(self) -> None:
+        model = _FakeModel([2])
+        scheduler = BatchScheduler(
+            model,
+            _FakeTokenizer(),
+            cache_manager=_FakeCacheManager(capacity=4),
+            max_batch_size=1,
+        )
+
+        with self.assertRaisesRegex(GenerationError, "KV cache holds"):
+            scheduler.add_request(
+                [ChatMessage("user", "question")], max_new_tokens=6
+            )
+        with self.assertRaisesRegex(SamplingError, "vocabulary size"):
+            scheduler.add_request(
+                [ChatMessage("user", "question")],
+                max_new_tokens=1,
+                sampling=SamplingConfig(temperature=1, top_k=6),
+            )
+        self.assertFalse(scheduler.has_unfinished)
+        self.assertEqual(model.prefill_calls, 0)
+
+    def test_step_failure_aborts_every_request(self) -> None:
+        model = _FakeBatchModel()
+        scheduler = BatchScheduler(
+            model,
+            _BatchTokenizer(),
+            cache_manager=model.cache_manager,
+            max_batch_size=1,
+        )
+        scheduler.add_request([ChatMessage("user", "first")], max_new_tokens=4)
+        scheduler.add_request([ChatMessage("user", "second")], max_new_tokens=4)
+        scheduler.step()
+        model.decode = MagicMock(side_effect=RuntimeError("decode failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "decode failed"):
+            scheduler.step()
+
+        self.assertEqual(len(model.cache_manager.released), 1)
+        self.assertEqual(model.cache_manager.used, 0)
+        self.assertFalse(scheduler.has_unfinished)
 
 
 if __name__ == "__main__":
