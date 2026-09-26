@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import math
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import torch
 
-from mini_llm.cache.paged import PagedBatchKVCache, PagedSequenceKVCache
+from mini_llm.cache.paged import (
+    PagedBatchKVCache,
+    PagedKVStore,
+    PagedSequenceKVCache,
+)
 from mini_llm.model.base import CausalLMBase
 
 
@@ -89,6 +93,8 @@ class PagedDecodeGraph:
         self,
         model: CausalLMBase,
         caches: Sequence[PagedSequenceKVCache],
+        *,
+        pool: tuple[int, int] | None = None,
     ) -> None:
         if not caches:
             raise ValueError("a decode graph batch must contain at least one cache")
@@ -103,6 +109,7 @@ class PagedDecodeGraph:
         max_blocks = math.ceil(
             model.config.max_position_embeddings / store.block_size
         )
+        self.model = model
         self.cache = PagedGraphCache(caches, max_blocks)
         self.input_ids = torch.zeros(
             (self.cache.batch_size, 1), dtype=torch.long, device=device
@@ -111,17 +118,18 @@ class PagedDecodeGraph:
             self.cache.lengths, dtype=torch.long, device=device
         ).unsqueeze(1)
 
+        # The LM head stays outside the graph, so each captured batch size pins
+        # only [batch, 1, hidden] outputs rather than [batch, 1, vocab] logits.
         self.graph = torch.cuda.CUDAGraph()
-        with torch.inference_mode(), torch.cuda.graph(self.graph):
-            hidden_states = model.model(
+        with torch.inference_mode(), torch.cuda.graph(self.graph, pool=pool):
+            self.hidden_states = model.model(
                 self.input_ids,
                 position_ids=self.position_ids,
                 layer_caches=self.cache.layers,
             )
-            self.logits = model._project_logits(hidden_states)
 
     def replay(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Decode one token for every bound request and return graph logits."""
+        """Decode one token for every bound request and return fresh logits."""
 
         expected_shape = (self.cache.batch_size, 1)
         if input_ids.shape != expected_shape or input_ids.dtype != torch.long:
@@ -145,4 +153,35 @@ class PagedDecodeGraph:
         except Exception:
             self.cache.rollback(previous_lengths)
             raise
-        return self.logits
+        return self.model._project_logits(self.hidden_states)
+
+
+class PagedDecodeGraphCache:
+    """Decode graphs over one paged store, captured lazily per batch size.
+
+    All graphs share one CUDA memory pool. That is safe because replays never
+    overlap and each replay's hidden states are projected to logits before
+    another graph runs.
+    """
+
+    def __init__(self, model: CausalLMBase, store: PagedKVStore) -> None:
+        self.model = model
+        self.store = store
+        self.pool = torch.cuda.graph_pool_handle()
+        self.graphs: dict[int, PagedDecodeGraph] = {}  # batch size -> graph
+
+    def bind(
+        self, caches: Sequence[PagedSequenceKVCache]
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
+        """Return a replay function bound to ``caches``, capturing a graph for a new batch size."""
+
+        caches = tuple(caches)
+        if any(cache.store is not self.store for cache in caches):
+            raise ValueError("graph caches must use the captured paged store")
+        graph = self.graphs.get(len(caches))
+        if graph is None:
+            graph = PagedDecodeGraph(self.model, caches, pool=self.pool)
+            self.graphs[len(caches)] = graph
+        elif graph.cache.requests != caches:
+            graph.cache.bind(caches)
+        return graph.replay

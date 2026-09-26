@@ -82,7 +82,8 @@ class QuantizedEngineTests(unittest.TestCase):
                             ([ChatMessage("user", "Say hello.")],), max_new_tokens=2
                         )
                     )
-                    first_graph = engine._decode_graph
+                    assert engine._decode_graphs is not None
+                    first_graph = engine._decode_graphs.graphs[1]
                     repeated_events = list(
                         engine.generate(
                             ([ChatMessage("user", "Say hello.")],), max_new_tokens=2
@@ -102,7 +103,7 @@ class QuantizedEngineTests(unittest.TestCase):
                         [event.token_id for _, event in repeated_events],
                         [event.token_id for _, event in events],
                     )
-                    self.assertIs(engine._decode_graph, first_graph)
+                    self.assertIs(engine._decode_graphs.graphs[1], first_graph)
                     self.assertEqual(engine.cache_manager.active_sequences, 0)
                     self.assertEqual(engine.cache_manager.spec.device.type, "cuda")
                 finally:

@@ -144,7 +144,7 @@ class EngineTests(unittest.TestCase):
                 self.assertIsInstance(engine.cache_manager, expected_type)
                 self.assertEqual(engine.cache_manager.capacity, 48)
 
-    @patch("mini_llm.engine.PagedDecodeGraph")
+    @patch("mini_llm.engine.PagedDecodeGraphCache")
     def test_cuda_graph_decode_can_be_disabled(
         self, paged_decode_graph: MagicMock
     ) -> None:
@@ -165,51 +165,6 @@ class EngineTests(unittest.TestCase):
 
         paged_decode_graph.assert_not_called()
         model.decode.assert_called_once_with(input_ids, caches=(cache,))
-
-    @patch("mini_llm.engine.PagedDecodeGraph")
-    def test_reuses_batched_decode_graph_across_block_counts(
-        self, paged_decode_graph: MagicMock
-    ) -> None:
-        model = MagicMock(spec=CausalLMBase)
-        engine = Engine(
-            model=model,
-            tokenizer=MagicMock(),
-            device=torch.device("cuda"),
-            dtype=torch.float16,
-            max_seq_len=32,
-            load_seconds=0.0,
-        )
-        store = MagicMock()
-        first_cache = MagicMock(spec=PagedSequenceKVCache)
-        first_cache.store = store
-        first_cache.block_table = torch.tensor([0, 1])
-        first_peer = MagicMock(spec=PagedSequenceKVCache)
-        first_peer.store = store
-        first_peer.block_table = torch.tensor([2])
-        second_cache = MagicMock(spec=PagedSequenceKVCache)
-        second_cache.store = store
-        second_cache.block_table = torch.tensor([3, 4, 5])
-        second_peer = MagicMock(spec=PagedSequenceKVCache)
-        second_peer.store = store
-        second_peer.block_table = torch.tensor([6, 7])
-        paged_decode_graph.return_value.cache.store = store
-        paged_decode_graph.return_value.cache.batch_size = 2
-
-        first_batch = (first_cache, first_peer)
-        second_batch = (second_cache, second_peer)
-        first_decode = engine._make_decode(first_batch)
-        second_decode = engine._make_decode(second_batch)
-
-        paged_decode_graph.assert_called_once_with(model, first_batch)
-        paged_decode_graph.return_value.cache.bind.assert_called_once_with(
-            second_batch
-        )
-        self.assertIs(first_decode, paged_decode_graph.return_value.replay)
-        self.assertIs(second_decode, paged_decode_graph.return_value.replay)
-
-        engine._make_decode((second_cache,))
-        self.assertEqual(paged_decode_graph.call_count, 2)
-        paged_decode_graph.assert_called_with(model, (second_cache,))
 
     def test_rejects_unknown_cache_backend(self) -> None:
         with self.assertRaisesRegex(EngineError, "cache backend"):
@@ -256,7 +211,7 @@ class EngineTests(unittest.TestCase):
             load_seconds=0.0,
         )
         _ = engine.cache_manager
-        engine._decode_graph = object()  # type: ignore[assignment]
+        engine._decode_graphs = object()  # type: ignore[assignment]
 
         result = engine.to(device="cpu", dtype="float16")
 
@@ -268,7 +223,7 @@ class EngineTests(unittest.TestCase):
             engine.model.model.rotary_emb.inverse_frequencies.dtype, torch.float32
         )
         self.assertEqual(engine.dtype, torch.float16)
-        self.assertIsNone(engine._decode_graph)
+        self.assertIsNone(engine._decode_graphs)
         self.assertEqual(engine.cache_manager.spec.dtype, torch.float16)
 
     def test_to_dtype_precedence(self) -> None:

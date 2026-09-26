@@ -17,7 +17,7 @@ from mini_llm.cache import (
 )
 from mini_llm.cache.paged import PagedSequenceKVCache
 from mini_llm.config import DecoderConfig, load_config
-from mini_llm.cuda_graph import PagedDecodeGraph
+from mini_llm.cuda_graph import PagedDecodeGraphCache
 from mini_llm.generation import GenerationEvent, generate as generate_text
 from mini_llm.model.base import CausalLMBase
 from mini_llm.model.contracts import RuntimeCausalLM
@@ -154,7 +154,7 @@ class Engine:
     _cache_manager: KVCacheManager | None = field(
         default=None, init=False, repr=False
     )
-    _decode_graph: PagedDecodeGraph | None = field(
+    _decode_graphs: PagedDecodeGraphCache | None = field(
         default=None, init=False, repr=False
     )
 
@@ -252,19 +252,10 @@ class Engine:
             and all(isinstance(cache, PagedSequenceKVCache) for cache in caches)
             and isinstance(self.model, CausalLMBase)
         ):
-            paged_caches = tuple(caches)
-            first = paged_caches[0]
-            if (
-                # Create/Recreate the graph if it is uninitialized or the cache store has changed.
-                self._decode_graph is None
-                or self._decode_graph.cache.store is not first.store
-                # batch size changed, need to recreate the decode graph
-                or self._decode_graph.cache.batch_size != len(paged_caches)
-            ):
-                self._decode_graph = PagedDecodeGraph(self.model, paged_caches)
-            else:
-                self._decode_graph.cache.bind(paged_caches)
-            return self._decode_graph.replay
+            store = caches[0].store
+            if self._decode_graphs is None or self._decode_graphs.store is not store:
+                self._decode_graphs = PagedDecodeGraphCache(self.model, store)
+            return self._decode_graphs.bind(caches)
         return lambda input_ids: self.model.decode(input_ids, caches=caches)
 
     def _ensure_cache_manager(self) -> KVCacheManager:
@@ -329,7 +320,7 @@ class Engine:
 
         # Module.to preserves eval mode and requires_grad flags. Cache managers
         # are runtime-owned and rebuilt lazily for the new placement.
-        self._decode_graph = None
+        self._decode_graphs = None
         self.model.to(device=selected_device, dtype=selected_dtype)
         if self.quantization == "gptq-marlin":
             self.model.prepare_quantized(selected_device)

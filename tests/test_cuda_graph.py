@@ -8,7 +8,7 @@ import torch
 
 from mini_llm.cache.paged import PagedKVCacheManager
 from mini_llm.config import Qwen3Config
-from mini_llm.cuda_graph import PagedDecodeGraph
+from mini_llm.cuda_graph import PagedDecodeGraph, PagedDecodeGraphCache
 from mini_llm.model.qwen import Qwen3ForCausalLM
 from tests.test_quantized_qwen_model import _config_data
 
@@ -103,6 +103,44 @@ class PagedDecodeGraphTests(unittest.TestCase):
             tuple(cache.length for cache in replay_caches),
             tuple(cache.length for cache in eager_caches),
         )
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_graph_cache_keeps_one_graph_per_batch_size_and_matches_eager(
+        self,
+    ) -> None:
+        config_data = _config_data()
+        del config_data["quantization_config"]
+        config = Qwen3Config.from_dict(config_data)
+        model = Qwen3ForCausalLM(config).cuda().half().eval()
+        model.requires_grad_(False)
+        model.materialize_derived_buffers(torch.device("cuda"))
+        pool = PagedKVCacheManager(config, 96, dtype=torch.float16, device="cuda")
+        r1, r2, e1, e2 = (pool.allocate(8) for _ in range(4))
+        prompts = (
+            torch.tensor([[1, 4]], device="cuda"),
+            torch.tensor([[2, 5, 3]], device="cuda"),
+        )
+
+        with torch.inference_mode():
+            for prompt, replay_cache, eager_cache in zip(prompts, (r1, r2), (e1, e2)):
+                model.prefill(prompt, cache=replay_cache)
+                model.prefill(prompt, cache=eager_cache)
+            graphs = PagedDecodeGraphCache(model, pool.store)
+
+            def check(replay_caches, eager_caches, tokens):
+                token_inputs = torch.tensor(tokens, device="cuda").unsqueeze(1)
+                actual = graphs.bind(replay_caches)(token_inputs).clone()
+                expected = model.decode(token_inputs, caches=eager_caches)
+                torch.testing.assert_close(actual, expected)
+
+            check((r1, r2), (e1, e2), (7, 8))
+            pair_graph = graphs.graphs[2]
+            check((r2,), (e2,), (9,))
+            check((r1, r2), (e1, e2), (6, 5))
+
+        self.assertEqual(sorted(graphs.graphs), [1, 2])
+        self.assertIs(graphs.graphs[2], pair_graph)
+        self.assertEqual((r1.length, r2.length), (e1.length, e2.length))
 
     @unittest.skipUnless(
         torch.cuda.is_available()
