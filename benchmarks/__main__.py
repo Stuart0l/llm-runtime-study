@@ -11,13 +11,16 @@ from typing import Sequence, TextIO
 
 import torch
 
-from benchmarks import end_to_end, moe_prefill
+from benchmarks import end_to_end, moe_prefill, staggered
 from benchmarks.common import PromptCase, build_prompt_case, render_table
 from mini_llm.config import load_config
 from mini_llm.engine import Engine, EngineError, infer_quantization
 
 
-BENCHMARKS = ("moe-prefill", "end-to-end")
+BENCHMARKS = ("moe-prefill", "end-to-end", "staggered")
+# Staggered arrivals replay a multi-second workload per mode, so it runs only
+# when named explicitly.
+DEFAULT_BENCHMARKS = ("moe-prefill", "end-to-end")
 
 
 class BenchmarkError(ValueError):
@@ -38,6 +41,13 @@ def _non_negative_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if not parsed >= 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks",
@@ -51,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--benchmark",
         nargs="+",
         choices=BENCHMARKS,
-        help="benchmark suites (default: all applicable suites)",
+        help="benchmark suites (default: all applicable suites except staggered)",
     )
     parser.add_argument(
         "--device",
@@ -68,7 +78,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmups", type=_non_negative_int, default=1)
     parser.add_argument("--repeats", type=_positive_int, default=3)
     parser.add_argument("--decode-tokens", type=_positive_int, default=16)
-    parser.add_argument("--batch-size", type=_positive_int, default=1)
+    parser.add_argument(
+        "--batch-size",
+        type=_positive_int,
+        default=1,
+        help="static batch size for end-to-end; maximum running batch for staggered",
+    )
+    parser.add_argument(
+        "--requests",
+        type=_positive_int,
+        default=16,
+        help="staggered: number of arriving requests",
+    )
+    parser.add_argument(
+        "--arrival-interval-ms",
+        type=_non_negative_float,
+        default=50.0,
+        help="staggered: time between consecutive request arrivals",
+    )
     return parser
 
 
@@ -116,6 +143,7 @@ def _print_results(
         headers = {
             "moe-prefill": moe_prefill.HEADERS,
             "end-to-end": end_to_end.HEADERS,
+            "staggered": staggered.HEADERS,
         }[name]
         print(f"\n{name}", file=output)
         print(render_table(headers, suite_rows), file=output)
@@ -123,7 +151,7 @@ def _print_results(
 
 def run(args: argparse.Namespace, *, output: TextIO) -> None:
     requested_devices = _selected_devices(args.device)
-    selected = list(dict.fromkeys(args.benchmark or BENCHMARKS))
+    selected = list(dict.fromkeys(args.benchmark or DEFAULT_BENCHMARKS))
     explicitly_selected = args.benchmark is not None
 
     for model_dir in args.model:
@@ -198,6 +226,18 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
                         repeats=args.repeats,
                         decode_tokens=args.decode_tokens,
                         batch_size=args.batch_size,
+                    )
+                )
+            if "staggered" in selected:
+                rows["staggered"].extend(
+                    staggered.run(
+                        engine,
+                        cases,
+                        warmups=args.warmups,
+                        repeats=args.repeats,
+                        decode_tokens=args.decode_tokens,
+                        requests=args.requests,
+                        interval_seconds=args.arrival_interval_ms / 1_000,
                     )
                 )
 

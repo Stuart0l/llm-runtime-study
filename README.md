@@ -370,6 +370,7 @@ reported as errors. Load and transfer times are reported separately.
 | --- | --- |
 | `moe-prefill` | Full Granite prefill latency and throughput using the device's automatic expert method. |
 | `end-to-end` | TTFT, sequential-prefill throughput, decode-step latency and aggregate throughput, output tokens, and cache memory through `Engine.generate`; `--batch-size` controls the request count. |
+| `staggered` | Opt-in. `--requests` requests arrive every `--arrival-interval-ms` and are served by continuous batching (`Engine.create_scheduler`, at most `--batch-size` running) and serially, one at a time in arrival order. Reports makespan, output throughput, and p50/p95 TTFT and latency measured from each request's arrival. |
 
 Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
 runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy

@@ -18,7 +18,44 @@ heads.
 Decode contributes one query token per active request, so its query tensor is
 naturally rectangular. The ragged dimension is the cached K/V history: each
 request can have a different logical length and block count. Ragged batched
-prefill is not implemented; prompts are still prefetched sequentially.
+prefill is not implemented; prompts are still prefilled one at a time.
+
+## Continuous batching
+
+`BatchScheduler` (created by `Engine.create_scheduler()`) keeps one running
+batch whose membership changes every step. Each `step()` decodes the tokens
+sampled by the previous step, admits waiting requests first come, first served
+while a batch slot is free and the KV cache can hold the request's full
+reservation, prefills them, and samples one token per running request. Finished
+requests release their cache immediately, so the next step can admit a waiting
+request. `Engine.generate()` submits all its requests to one scheduler; requests
+beyond `max_batch_size` wait instead of failing.
+
+CUDA graphs are kept per batch size in one shared memory pool, so membership
+changes rebind a graph instead of recapturing it.
+
+### Staggered-arrival benchmark
+
+```bash
+uv run --group gptq python -m benchmarks --model models/qwen3-0.6b \
+  --benchmark staggered --device cuda --prompt-lengths 512 --decode-tokens 128 \
+  --batch-size 16 --requests 32 --arrival-interval-ms 50 --warmups 1 --repeats 3
+```
+
+Thirty-two requests (509 prompt tokens, 128 output tokens each) arrive 50 ms
+apart on the RTX 3070 with Qwen3-0.6B FP16. Continuous batching runs at most 16
+at once; serial serving handles one at a time in arrival order. TTFT and latency
+are measured from each request's arrival; values are medians of three runs.
+
+| Mode | Makespan | Output tok/s | TTFT p50 | TTFT p95 | Latency p50 | Latency p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Continuous, max 16 | 4.24 s | 965.1 | 141.4 ms | 1334.8 ms | 2088.6 ms | 3209.8 ms |
+| Serial | 26.33 s | 155.6 | 11623.3 ms | 23219.3 ms | 12411.7 ms | 24007.8 ms |
+
+Serial serving needs about 0.82 s per request, far more than the 50 ms arrival
+gap, so its queue grows with every arrival and TTFT is dominated by waiting.
+Continuous batching finishes the same work 6.2x sooner. Its TTFT p95 of 1.3 s
+comes from the last requests waiting for one of the 16 batch slots to free up.
 
 ## Long-context benchmark
 
