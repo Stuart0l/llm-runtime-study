@@ -11,13 +11,14 @@ from typing import Sequence, TextIO
 
 import torch
 
-from benchmarks import end_to_end, moe_prefill, staggered
+from benchmarks import end_to_end, moe_prefill, staggered, staggered_http
 from benchmarks.common import PromptCase, build_prompt_case, render_table
 from mini_llm.config import load_config
 from mini_llm.engine import Engine, EngineError, infer_quantization
+from mini_llm.tokenizer import load_tokenizer
 
 
-BENCHMARKS = ("moe-prefill", "end-to-end", "staggered")
+BENCHMARKS = ("moe-prefill", "end-to-end", "staggered", "staggered-http")
 # Staggered arrivals replay a multi-second workload per mode, so it runs only
 # when named explicitly.
 DEFAULT_BENCHMARKS = ("moe-prefill", "end-to-end")
@@ -82,7 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--batch-size",
         type=_positive_int,
         default=1,
-        help="static batch size for end-to-end; maximum running batch for staggered",
+        help=(
+            "static batch size for end-to-end; maximum running batch for "
+            "staggered; ignored by staggered-http"
+        ),
     )
     parser.add_argument(
         "--requests",
@@ -95,6 +99,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=_non_negative_float,
         default=50.0,
         help="staggered: time between consecutive request arrivals",
+    )
+    parser.add_argument(
+        "--url",
+        help="staggered-http only: server base URL, e.g. http://127.0.0.1:8000/v1",
+    )
+    parser.add_argument(
+        "--max-in-flight",
+        type=_positive_int,
+        help=(
+            "staggered-http only: most requests outstanding at once; set it to "
+            "the server's --max-queue-depth"
+        ),
+    )
+    parser.add_argument(
+        "--served-model-name",
+        help="staggered-http only: model name to request (default: model directory name)",
     )
     return parser
 
@@ -144,12 +164,46 @@ def _print_results(
             "moe-prefill": moe_prefill.HEADERS,
             "end-to-end": end_to_end.HEADERS,
             "staggered": staggered.HEADERS,
+            "staggered-http": staggered_http.HEADERS,
         }[name]
         print(f"\n{name}", file=output)
         print(render_table(headers, suite_rows), file=output)
 
 
+def _run_staggered_http(args: argparse.Namespace, *, output: TextIO) -> None:
+    """Measure an external server; never load model weights in this process."""
+
+    if list(args.benchmark) != ["staggered-http"]:
+        raise BenchmarkError("staggered-http must be the only selected benchmark")
+    if args.device is not None:
+        raise BenchmarkError("staggered-http measures an external server; omit --device")
+    if len(args.model) != 1:
+        raise BenchmarkError("staggered-http takes exactly one --model")
+    if args.url is None or args.max_in_flight is None:
+        raise BenchmarkError("staggered-http requires --url and --max-in-flight")
+    model_dir = args.model[0]
+    tokenizer = load_tokenizer(model_dir)
+    cases = tuple(
+        build_prompt_case(tokenizer, length) for length in args.prompt_lengths
+    )
+    rows = staggered_http.run(
+        cases,
+        url=args.url,
+        served_model=args.served_model_name or model_dir.name,
+        max_in_flight=args.max_in_flight,
+        warmups=args.warmups,
+        repeats=args.repeats,
+        decode_tokens=args.decode_tokens,
+        requests=args.requests,
+        interval_seconds=args.arrival_interval_ms / 1_000,
+    )
+    _print_results(model_dir, {"staggered-http": rows}, output=output)
+
+
 def run(args: argparse.Namespace, *, output: TextIO) -> None:
+    if args.benchmark is not None and "staggered-http" in args.benchmark:
+        _run_staggered_http(args, output=output)
+        return
     requested_devices = _selected_devices(args.device)
     selected = list(dict.fromkeys(args.benchmark or DEFAULT_BENCHMARKS))
     explicitly_selected = args.benchmark is not None
@@ -181,7 +235,7 @@ def run(args: argparse.Namespace, *, output: TextIO) -> None:
             file=output,
         )
         cases = tuple(
-            build_prompt_case(engine, length) for length in args.prompt_lengths
+            build_prompt_case(engine.tokenizer, length) for length in args.prompt_lengths
         )
         _validate_cases(engine, cases, args.decode_tokens)
 

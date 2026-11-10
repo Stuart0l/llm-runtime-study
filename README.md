@@ -371,10 +371,12 @@ uv run python -m benchmarks \
   --decode-tokens 16
 ```
 
-The runner always uses FP16. It loads each checkpoint once, runs every selected
-device, and moves the same engine without reloading. Available MPS and CUDA
-devices are included by default; unavailable explicitly requested devices are
-reported as errors. Load and transfer times are reported separately.
+The in-process suites always use FP16. The runner loads each checkpoint once,
+runs every selected device, and moves the same engine without reloading.
+Available MPS and CUDA devices are included by default; unavailable explicitly
+requested devices are reported as errors. Load and transfer times are reported
+separately. `staggered-http` instead measures an already running server and
+loads only the tokenizer.
 
 | Suite | Measurements |
 | --- | --- |
@@ -383,6 +385,7 @@ reported as errors. Load and transfer times are reported separately.
 | `staggered` | Opt-in. `--requests` requests arrive every `--arrival-interval-ms` and are served by continuous batching (`Engine.create_scheduler`, at most `--batch-size` running) and serially, one at a time in arrival order. Reports makespan, output throughput, and p50/p95 TTFT and latency measured from each request's arrival. |
 
 Defaults are prompt lengths `32 128 512`, one untimed warmup, three measured
+| `staggered-http` | Opt-in and runs alone. Sends the staggered workload to a running server at `--url` (for example `http://127.0.0.1:8000/v1`) with at most `--max-in-flight` requests outstanding; set that to the server's `--max-queue-depth`. Loads only the tokenizer from the single `--model`. Reports makespan, output throughput, and p50/p95 latency from each request's scheduled arrival; no TTFT because responses are not streamed. Any non-200 response fails the run. |
 runs, and 16 decode tokens. Tables report medians. Warmups initialize lazy
 kernels, allocator storage, and reusable caches. CUDA and MPS are synchronized
 at timing boundaries because accelerator work is asynchronous.

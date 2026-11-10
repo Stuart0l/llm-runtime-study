@@ -57,6 +57,54 @@ gap, so its queue grows with every arrival and TTFT is dominated by waiting.
 Continuous batching finishes the same work 6.2x sooner. Its TTFT p95 of 1.3 s
 comes from the last requests waiting for one of the 16 batch slots to free up.
 
+### HTTP serving
+
+The OpenAI-compatible server (`python -m mini_llm.serving.server`) drives the
+same `BatchScheduler` from one driver task: every scheduler call runs on one
+single-thread executor, and up to `--max-batch-size` requests decode together.
+The `staggered-http` suite replays the staggered workload against a running
+server. It sends `temperature: 0` and `max_completion_tokens: 128`, keeps at
+most `--max-in-flight` requests outstanding (set to the server's
+`--max-queue-depth`, so the server never answers 429), and measures latency
+from each request's scheduled arrival. Responses are not streamed, so there is
+no TTFT.
+
+Server (one run per batch size; stop it before the next):
+
+```bash
+uv run --group gptq python -m mini_llm.serving.server --model models/qwen3-0.6b \
+  --device cuda --dtype float16 --max-seq-len 704 --max-batch-size 16
+```
+
+Benchmark (second terminal; `--max-in-flight 64` for batch 16, `4` for batch 1,
+matching each server's default queue depth):
+
+```bash
+uv run --group gptq python -m benchmarks --model models/qwen3-0.6b \
+  --benchmark staggered-http --url http://127.0.0.1:8000/v1 --max-in-flight 64 \
+  --prompt-lengths 512 --decode-tokens 128 --requests 32 \
+  --arrival-interval-ms 50 --warmups 1 --repeats 3
+```
+
+Same workload and GPU as above (RTX 3070, Qwen3-0.6B FP16, 32 requests of 509
+prompt tokens and 128 output tokens, 50 ms apart). The in-process rows were
+re-measured in the same session; values are medians of three runs.
+
+| Configuration | Makespan | Output tok/s | Latency p50 | Latency p95 |
+| --- | ---: | ---: | ---: | ---: |
+| In-process continuous, max 16 | 4.18 s | 978.9 | 2051.8 ms | 3135.1 ms |
+| In-process serial | 26.43 s | 155.0 | 12464.8 ms | 24101.7 ms |
+| HTTP server, `--max-batch-size 16` | 4.23 s | 969.3 | 2060.2 ms | 3174.7 ms |
+| HTTP server, `--max-batch-size 1` | 26.83 s | 152.6 | 12674.2 ms | 24498.7 ms |
+
+- In-process: serial makespan ÷ continuous makespan = 6.32x.
+- HTTP: batch-1 makespan ÷ batch-16 makespan = 6.34x.
+
+Serving over HTTP keeps the in-process gain. The HTTP server adds about 1%
+to makespan at batch 16 (4.23 s vs 4.18 s) and about 2% at batch 1 (26.83 s
+vs 26.43 s); that difference covers HTTP handling, JSON encoding, and the
+hand-off of each step to the scheduler thread.
+
 ## Long-context benchmark
 
 All decode variants were measured with the following setup:

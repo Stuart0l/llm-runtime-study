@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from statistics import median
 import time
 from typing import Callable, Generic, Sequence, TypeVar
@@ -10,7 +11,7 @@ from typing import Callable, Generic, Sequence, TypeVar
 import torch
 
 from mini_llm.engine import Engine
-from mini_llm.tokenizer import ChatMessage
+from mini_llm.tokenizer import ChatMessage, RuntimeTokenizer
 
 
 T = TypeVar("T")
@@ -46,14 +47,14 @@ _PROMPT_FRAGMENT = (
 )
 
 
-def _formatted_ids(engine: Engine, prompt: str) -> tuple[int, ...]:
-    formatted = engine.tokenizer.format_chat(
+def _formatted_ids(tokenizer: RuntimeTokenizer, prompt: str) -> tuple[int, ...]:
+    formatted = tokenizer.format_chat(
         [ChatMessage("user", prompt)], enable_thinking=False
     )
-    return tuple(engine.tokenizer.encode(formatted))
+    return tuple(tokenizer.encode(formatted))
 
 
-def build_prompt_case(engine: Engine, target_tokens: int) -> PromptCase:
+def build_prompt_case(tokenizer: RuntimeTokenizer, target_tokens: int) -> PromptCase:
     """Find a deterministic natural-language prompt close to a token target."""
 
     if target_tokens <= 0:
@@ -63,13 +64,13 @@ def build_prompt_case(engine: Engine, target_tokens: int) -> PromptCase:
     # neighboring repetition counts rather than claiming an exact token length.
     low = 0
     high = 1
-    while len(_formatted_ids(engine, _PROMPT_FRAGMENT * high)) < target_tokens:
+    while len(_formatted_ids(tokenizer, _PROMPT_FRAGMENT * high)) < target_tokens:
         low = high
         high *= 2
 
     while low + 1 < high:
         middle = (low + high) // 2
-        if len(_formatted_ids(engine, _PROMPT_FRAGMENT * middle)) < target_tokens:
+        if len(_formatted_ids(tokenizer, _PROMPT_FRAGMENT * middle)) < target_tokens:
             low = middle
         else:
             high = middle
@@ -77,7 +78,7 @@ def build_prompt_case(engine: Engine, target_tokens: int) -> PromptCase:
     candidates = []
     for repetitions in sorted({low, high}):
         prompt = _PROMPT_FRAGMENT * repetitions
-        token_ids = _formatted_ids(engine, prompt)
+        token_ids = _formatted_ids(tokenizer, prompt)
         candidates.append(
             PromptCase(target_tokens, prompt, token_ids)
         )
@@ -85,6 +86,13 @@ def build_prompt_case(engine: Engine, target_tokens: int) -> PromptCase:
         candidates,
         key=lambda case: (abs(case.actual_tokens - target_tokens), case.actual_tokens),
     )
+
+
+def percentile(values: Sequence[float], fraction: float) -> float:
+    """Nearest-rank percentile."""
+
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
 
 
 def measure(

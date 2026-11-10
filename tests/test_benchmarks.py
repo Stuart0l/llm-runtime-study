@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import asyncio
 from io import StringIO
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import unittest
 
+import httpx
 import torch
 
-from benchmarks import end_to_end
-from benchmarks.__main__ import BenchmarkError, _selected_devices, run
+from benchmarks import end_to_end, staggered_http
+from benchmarks.__main__ import BenchmarkError, _selected_devices, main, run
 from benchmarks.common import PromptCase, measure, render_table
+from benchmarks.staggered_http import StaggeredHttpError
 from mini_llm.generation import GenerationEvent
 
 
@@ -125,6 +129,11 @@ class RunnerTests(unittest.TestCase):
             "repeats": 1,
             "decode_tokens": 1,
             "batch_size": 1,
+            "requests": 2,
+            "arrival_interval_ms": 0.0,
+            "url": None,
+            "max_in_flight": None,
+            "served_model_name": None,
         }
         values.update(overrides)
         return Namespace(**values)
@@ -303,6 +312,189 @@ class RunnerTests(unittest.TestCase):
                 self._args(benchmark=["moe-prefill"], device=["cpu"]),
                 output=StringIO(),
             )
+
+
+    @patch("benchmarks.__main__.Engine.from_model_dir")
+    def test_staggered_http_rejects_invalid_combinations_without_loading(
+        self, from_model_dir: MagicMock
+    ) -> None:
+        complete = {"url": "http://server/v1", "max_in_flight": 2}
+        cases = {
+            "another suite": self._args(
+                benchmark=["staggered-http", "staggered"], **complete
+            ),
+            "device": self._args(
+                benchmark=["staggered-http"], device=["cuda"], **complete
+            ),
+            "two models": self._args(
+                benchmark=["staggered-http"],
+                model=[Path("a"), Path("b")],
+                **complete,
+            ),
+            "missing url": self._args(benchmark=["staggered-http"], max_in_flight=2),
+            "missing max in-flight": self._args(
+                benchmark=["staggered-http"], url="http://server/v1"
+            ),
+        }
+        for name, args in cases.items():
+            with self.subTest(name), self.assertRaises(BenchmarkError):
+                run(args, output=StringIO())
+        from_model_dir.assert_not_called()
+
+    @patch("benchmarks.__main__.staggered_http.run", return_value=[])
+    @patch("benchmarks.__main__.build_prompt_case")
+    @patch("benchmarks.__main__.load_tokenizer")
+    @patch("benchmarks.__main__.Engine.from_model_dir")
+    def test_staggered_http_loads_only_the_tokenizer(
+        self,
+        from_model_dir: MagicMock,
+        load_tokenizer: MagicMock,
+        build_prompt_case: MagicMock,
+        http_run: MagicMock,
+    ) -> None:
+        build_prompt_case.return_value = PromptCase(32, "prompt", (1, 2))
+
+        run(
+            self._args(
+                model=[Path("models/qwen3-0.6b")],
+                benchmark=["staggered-http"],
+                url="http://server/v1",
+                max_in_flight=4,
+                served_model_name="served",
+            ),
+            output=StringIO(),
+        )
+
+        from_model_dir.assert_not_called()
+        load_tokenizer.assert_called_once_with(Path("models/qwen3-0.6b"))
+        self.assertIs(build_prompt_case.call_args.args[0], load_tokenizer.return_value)
+        self.assertEqual(http_run.call_args.kwargs["served_model"], "served")
+        self.assertEqual(http_run.call_args.kwargs["max_in_flight"], 4)
+
+
+def _completion(prompt_tokens: int = 2, completion_tokens: int = 3) -> dict:
+    return {
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+    }
+
+
+class StaggeredHttpTests(unittest.TestCase):
+    case = PromptCase(2, "prompt", (1, 2))
+
+    def _run(self, transport: httpx.AsyncBaseTransport, **overrides) -> list:
+        options = {
+            "url": "http://server/v1",
+            "served_model": "served",
+            "max_in_flight": 2,
+            "warmups": 0,
+            "repeats": 1,
+            "decode_tokens": 3,
+            "requests": 5,
+            "interval_seconds": 0.0,
+            "transport": transport,
+        }
+        options.update(overrides)
+        return staggered_http.run([self.case], **options)
+
+    def test_never_exceeds_max_in_flight_and_reports_one_row(self) -> None:
+        active = 0
+        peak = 0
+        bodies = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            bodies.append(json.loads(request.content))
+            await asyncio.sleep(0.01)
+            active -= 1
+            return httpx.Response(200, json=_completion())
+
+        rows = self._run(httpx.MockTransport(handler))
+
+        self.assertEqual(peak, 2)
+        self.assertEqual(len(bodies), 5)
+        self.assertEqual(
+            bodies[0],
+            {
+                "model": "served",
+                "messages": [{"role": "user", "content": "prompt"}],
+                "temperature": 0,
+                "max_completion_tokens": 3,
+            },
+        )
+        self.assertEqual(
+            rows[0][:5], ("http://server/v1", "5", "0 ms", "2", "2")
+        )
+
+    def test_latency_includes_time_waiting_for_a_client_slot(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.05)
+            return httpx.Response(200, json=_completion())
+
+        rows = self._run(
+            httpx.MockTransport(handler), max_in_flight=1, requests=2
+        )
+
+        # The second request waits ~50 ms for the only slot, then takes ~50 ms,
+        # so p95 latency (the slower request) is about 100 ms, not 50 ms.
+        p95 = float(rows[0][8].removesuffix(" ms"))
+        self.assertGreater(p95, 90.0)
+
+    def test_failed_responses_raise_staggered_http_error(self) -> None:
+        def connect_error(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+        handlers = {
+            "429": lambda _request: httpx.Response(429, json={"error": {}}),
+            "missing usage": lambda _request: httpx.Response(200, json={}),
+            "prompt mismatch": lambda _request: httpx.Response(
+                200, json=_completion(prompt_tokens=9)
+            ),
+            "connection error": connect_error,
+        }
+        for name, handler in handlers.items():
+            with self.subTest(name), self.assertRaises(StaggeredHttpError):
+                self._run(httpx.MockTransport(handler))
+
+    @patch("benchmarks.__main__.build_prompt_case")
+    @patch("benchmarks.__main__.load_tokenizer")
+    def test_connection_error_is_reported_by_main(
+        self, _load_tokenizer: MagicMock, build_prompt_case: MagicMock
+    ) -> None:
+        build_prompt_case.return_value = self.case
+        error = StringIO()
+
+        # Nothing listens on port 9 (discard); the request fails to connect.
+        status = main(
+            [
+                "--model",
+                "models/qwen3-0.6b",
+                "--benchmark",
+                "staggered-http",
+                "--url",
+                "http://127.0.0.1:9/v1",
+                "--max-in-flight",
+                "1",
+                "--requests",
+                "1",
+                "--prompt-lengths",
+                "2",
+                "--repeats",
+                "1",
+                "--warmups",
+                "0",
+            ],
+            output=StringIO(),
+            error=error,
+        )
+
+        self.assertEqual(status, 2)
+        self.assertTrue(error.getvalue().startswith("error: request 0:"))
 
 
 if __name__ == "__main__":

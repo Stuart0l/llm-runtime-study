@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-import math
 from statistics import median
 import time
 from typing import Sequence
@@ -13,7 +12,7 @@ from mini_llm.engine import Engine
 from mini_llm.sampling import SamplingConfig
 from mini_llm.tokenizer import ChatMessage
 
-from benchmarks.common import PromptCase
+from benchmarks.common import PromptCase, percentile
 
 
 HEADERS = (
@@ -144,13 +143,6 @@ def _run_serial(
     return recorder.result()
 
 
-def _percentile(values: Sequence[float], fraction: float) -> float:
-    """Nearest-rank percentile."""
-
-    ordered = sorted(values)
-    return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
-
-
 def run(
     engine: Engine,
     cases: Sequence[PromptCase],
@@ -186,7 +178,7 @@ def run(
 
             def stat(values: str, fraction: float) -> str:
                 seconds = median(
-                    _percentile(getattr(run, values), fraction) for run in runs
+                    percentile(getattr(run, values), fraction) for run in runs
                 )
                 return f"{seconds * 1_000:.1f} ms"
 
