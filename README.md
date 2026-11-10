@@ -414,13 +414,10 @@ Focused learning examples:
 ```bash
 uv run python -m examples.inspect_config models/qwen3-0.6b
 uv run python -m examples.tokenizer_demo models/qwen3-0.6b "Hello"
-uv run python -m examples.checkpoint_inspect models/qwen3-0.6b
 uv run python -m examples.norm_demo
-uv run python -m examples.rope_demo
 uv run python -m examples.mlp_demo
 uv run python -m examples.attention_demo
 uv run python -m examples.moe_demo
-uv run python -m examples.generation_demo models/qwen3-0.6b
 ```
 
 ## Current Limitations
