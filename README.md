@@ -13,7 +13,7 @@ The runtime currently supports:
 | Checkpoints | Single-file and indexed sharded Safetensors |
 | Tokenization | Local `tokenizer.json` through `tokenizers` |
 | Generation | Greedy, temperature, top-k, top-p, and seeded sampling |
-| Execution | CPU, NVIDIA CUDA, and Apple MPS; static padded request batches |
+| Execution | CPU, NVIDIA CUDA, and Apple MPS; continuous batching of up to `max_batch_size` running requests |
 | Cache | Runtime-owned request caches; paged by default, dense optional |
 | CUDA graphs | Reusable single-token decode with the paged CUDA cache |
 | Serving | Synchronous OpenAI-compatible Chat Completions through FastAPI |
@@ -196,13 +196,23 @@ uv run python -m mini_llm.serving.server \
   --port 8000 \
   --device auto \
   --dtype auto \
-  --max-seq-len 4096
+  --max-seq-len 4096 \
+  --max-batch-size 1 \
+  --max-queue-depth 4
 ```
 
 The server loads one model before accepting requests and always uses one worker.
-Model execution is currently serialized even though KV state is request-owned;
-continuous batching is a later milestone. The served model name defaults to the
-model-directory name and can be changed with `--served-model-name NAME`.
+Concurrent requests share one continuously batched decode of up to
+`--max-batch-size` requests; new requests join as running ones finish. At most
+`--max-queue-depth` requests (default 4 × the batch size) are accepted at once,
+running plus waiting; further requests get HTTP 429 with `Retry-After: 1`.
+The KV cache pool reserves `--max-seq-len × --max-batch-size` tokens when the
+server starts, about 112 KiB per token for Qwen3-0.6B in FP16 (4.81 GiB ÷
+(64 × 704) tokens, from [Batched decode](doc/batch.md)). When raising
+`--max-batch-size`, lower `--max-seq-len` to what requests need; on CUDA, a
+pool that does not fit stops the server at startup with `error:`. The served
+model name defaults to the model-directory name and can be changed with
+`--served-model-name NAME`.
 
 Send a request:
 
@@ -412,9 +422,8 @@ uv run python -m examples.generation_demo models/qwen3-0.6b
 
 ## Current Limitations
 
-- Static request batches only; no dynamic admission during generation.
 - Synchronous, non-streaming HTTP responses.
 - CUDA paged attention requires the optional pinned vLLM operator group.
 - No prefix sharing, sliding-window eviction, or CPU cache offload.
-- The HTTP server still serializes requests instead of continuously batching them.
+- The HTTP server does not detect client disconnects; a request whose client leaves runs to completion.
 - Only Qwen3 and Granite 3.1 MoE architectures.

@@ -225,9 +225,11 @@ class OpenAIRequestError(ValueError):
         error_type: str = "invalid_request_error",
         param: str | None = None,
         code: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.headers: dict[str, str] = dict(headers or {})
         self.response = OpenAIErrorResponse(
             error=OpenAIErrorDetail(
                 message=message,
